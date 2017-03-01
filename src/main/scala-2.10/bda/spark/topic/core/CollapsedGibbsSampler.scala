@@ -1,4 +1,6 @@
-package bda.spark.stream.topic
+package bda.spark.topic.core
+
+import breeze.linalg.{DenseMatrix, DenseVector}
 
 import scala.util.Random
 
@@ -80,13 +82,31 @@ object CollapsedGibbsSampler extends Serializable {
 
   }
 
+  def sample(docTopicStats: DenseVector[Int],
+             termTopicStats: DenseVector[Int],
+             topicStats: DenseVector[Int],
+             alpha: Int, beta: Int, V:Int): Int ={
+
+    val docTopicStatsPlus = docTopicStats + alpha
+    val termTopicStatsPlus = termTopicStats + beta
+    val topicStatsPlus  = topicStats + V * beta
+
+    val phis =(docTopicStatsPlus :* termTopicStatsPlus).toArray.
+      zip(topicStatsPlus.toArray).map{
+      case (x, y) =>
+        x.toDouble / y
+    }
+
+    val topic = sample(phis)
+    topic
+  }
 
   /**
     * 根据sampleRate进行维度采样
     * @param sampleRate 一个比例数组,第K维的值表示第K维被采样到的占比
     * @return 采样得到的维度
     */
-  private def sample(sampleRate: Seq[Double]): Int = {
+  def sample(sampleRate: Seq[Double]): Int = {
 
     val totRate = sampleRate.sum
 
@@ -100,5 +120,19 @@ object CollapsedGibbsSampler extends Serializable {
     return sampleRate.length - 1
 
   }
+
+  def main(args: Array[String]): Unit = {
+    val p = Array(1.0, 9.0, 9.0)
+
+    val cnt = Array(0, 0,0)
+    val p2 = Range(0, 10000).map{
+      k =>
+        val x = sample(p)
+        cnt(x) += 1
+    }
+
+    cnt.foreach( println )
+  }
 }
+
 

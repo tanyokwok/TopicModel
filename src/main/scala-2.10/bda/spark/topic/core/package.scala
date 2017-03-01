@@ -1,4 +1,4 @@
-package bda.spark.stream
+package bda.spark.topic
 
 /**
   * Created by Roger on 17/2/22.

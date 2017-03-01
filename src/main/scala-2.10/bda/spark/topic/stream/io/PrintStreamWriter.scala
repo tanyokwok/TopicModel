@@ -15,23 +15,25 @@
  *
  */
 
-package io
+package bda.spark.topic.stream.io
 
-import bda.spark.stream.core.Example
-import org.apache.spark.streaming.StreamingContext
 import org.apache.spark.streaming.dstream.DStream
 
 /**
- * Abstract class for outputing a DStream of Examples to be used 
- * inside tasks.
+ * Stream writer that outputs the stream to the standard output.
  */
-abstract class StreamReader {
-  /**
-   * Obtains a stream of examples.
-   *
-   * @param ssc a Spark Streaming context
-   * @return a stream of Examples
-   */
-  def getExamples(ssc:StreamingContext): DStream[Example]
+class PrintStreamWriter extends StreamWriter{
 
+  /**
+   * Process the output.
+   * <p>
+   * In the PrintStreamWriter, each String in the stream is sent to stdout.
+   * 
+   * @param stream a DStream of Strings for which the output is processed 
+   */
+  def output(stream: DStream[String]) = {
+    stream.foreachRDD(rdd => {
+      rdd.foreach(x => {println(x)})
+    })
+  }
 }
