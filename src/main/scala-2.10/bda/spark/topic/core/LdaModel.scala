@@ -17,11 +17,13 @@
 
 package bda.spark.topic.core
 
+import bda.spark.topic.glint.Glint
 import breeze.linalg.{DenseMatrix, DenseVector}
 
+import scala.concurrent.ExecutionContext.Implicits.global
 import scala.collection.mutable
 import glint._
-import glint.models.client.BigMatrix;
+import glint.models.client.{BigMatrix, BigVector};
 
 /**
   * Latent Dirichlet Allocation (LDA) model.
@@ -44,8 +46,12 @@ abstract class LdaModel() extends Serializable{
   def topicWords(T: Int): Seq[QUEUE]
 
   def estimatedMemUse() = {
-    val vocab_bytes = vocabulary.map(_.getBytes.length).sum
-    (vocabulary.size)* K * 8 + vocab_bytes
+    if (vocabulary == null) {
+      -1
+    } else {
+      val vocab_bytes = vocabulary.map(_.getBytes.length).sum
+      (vocabulary.size) * K * 8 + vocab_bytes
+    }
   }
 }
 
@@ -110,7 +116,7 @@ class SimpleLdaModel(override val K:Int,
                      override val BETA: Int,
                      val betaStatsMatrix: DenseMatrix[Int],
                      val word2id: Map[String, Int]
-                    ) extends LdaModel{
+                    ) extends LdaModel with Serializable{
 
 
   override def topicWords(T:Int) = {
@@ -137,9 +143,47 @@ class PsLdaModel(override val K:Int,
                  override val ALPHA:Int,
                  override val BETA: Int,
                  val betaStatsMatrix: BigMatrix[Double],
-                 val word2id: Map[String, Int]) extends LdaModel{
-  override def vocabulary: Set[String] = word2id.keySet
+                 val topicStatsVector: BigVector[Double]) extends LdaModel{
+  override def vocabulary: Set[String] = null
 
   override def topicWords(T: Int): Seq[QUEUE] = ???
+}
+
+class PsStreamLdaModel(val K: Int,
+                       val V: Long,
+                       val alpha: Int,
+                       val beta: Int) extends Serializable{
+
+  @transient
+  val client = glint.Client()
+  val priorWordTopicCountMat: BigMatrix[Double] = client.matrix[Double](V, K)
+  val priorTopicCountVec: BigVector[Double] = client.vector[Double](K)
+
+  def destroy(): Unit ={
+    priorTopicCountVec.destroy()
+    priorWordTopicCountMat.destroy()
+    client.stop()
+  }
+  type TOPICASSIGN = (Long, Double)
+  type QUEUE = mutable.PriorityQueue[TOPICASSIGN]
+
+  def topicWords(T:Int) = {
+    val queues = Array.fill[QUEUE](K)(new QUEUE()(Ordering.by(-_._2)))
+
+    val matrix = Glint.pullData((0L until V).toArray, priorWordTopicCountMat)
+
+    matrix.foreach{
+      case (term, vec) =>
+        Range(0, K).foreach{
+          k =>
+            queues(k).enqueue((term, vec(k)))
+            if (T < queues(k).size) {
+              queues(k).dequeue()
+            }
+        }
+    }
+    queues
+  }
+
 }
 

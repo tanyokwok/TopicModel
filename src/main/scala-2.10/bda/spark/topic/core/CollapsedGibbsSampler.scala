@@ -31,7 +31,6 @@ object CollapsedGibbsSampler extends Serializable {
 
     sample(sampleRate)
   }
-
   /**
     * Gibbs采样算法, 下列参数的均为(K * 1)维的主题统计量列表, 第K维对应到第K个主题
     * @param prioriAlphaTopicStats alpha先验的统计量
@@ -82,6 +81,27 @@ object CollapsedGibbsSampler extends Serializable {
 
   }
 
+  def sample(docTopicStats: Array[Double],
+             termTopicStats: Array[Double],
+             topicStats: Array[Double],
+             alpha: Int, beta: Int, V:Long): Int ={
+
+    val docTopicStatsPlus = docTopicStats.map(_ + alpha)
+    val termTopicStatsPlus = termTopicStats.map(_ + beta)
+    val topicStatsPlus  = topicStats.map(_ + V * beta)
+
+    val phis = docTopicStatsPlus.zip(termTopicStatsPlus).map{
+      case (x,y) =>
+        x * y
+    }.zip(topicStatsPlus).map{
+      case (x,y) =>
+        x / y
+    }
+
+    val topic = sample(phis)
+    topic
+  }
+
   def sample(docTopicStats: DenseVector[Int],
              termTopicStats: DenseVector[Int],
              topicStats: DenseVector[Int],
@@ -93,6 +113,21 @@ object CollapsedGibbsSampler extends Serializable {
 
     val phis =(docTopicStatsPlus :* termTopicStatsPlus).toArray.
       zip(topicStatsPlus.toArray).map{
+      case (x, y) =>
+        x.toDouble / y
+    }
+
+    val topic = sample(phis)
+    topic
+  }
+
+  def sample(docTopicStats: DenseVector[Double],
+             termTopicStats: DenseVector[Double],
+             topicStats: DenseVector[Double]): Int ={
+
+
+    val phis =(docTopicStats :* termTopicStats).toArray.
+      zip(topicStats.toArray).map{
       case (x, y) =>
         x.toDouble / y
     }

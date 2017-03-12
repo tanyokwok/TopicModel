@@ -1,7 +1,7 @@
 package bda.spark.topic.task
 
 import bda.spark.topic.core.Example
-import bda.spark.topic.local.{OnlineLDA, SimpleLDA}
+import bda.spark.topic.local.{SimpleLDA}
 import bda.spark.topic.local.io._
 import bda.spark.topic.utils.Timer
 

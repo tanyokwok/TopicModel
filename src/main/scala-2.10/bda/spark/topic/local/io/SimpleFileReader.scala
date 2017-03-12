@@ -17,10 +17,9 @@
 
 package bda.spark.topic.local.io
 
-import bda.spark.topic.core.{DocInstance, Example}
+import bda.spark.topic.core.{Example, TextDocInstance, TextDocInstance$}
 import org.ansj.recognition.impl.StopRecognition
 import org.ansj.splitWord.analysis.ToAnalysis
-import org.apache.spark.Logging
 
 import scala.collection.JavaConversions._
 import scala.io.Source
@@ -39,7 +38,7 @@ import scala.util.parsing.json.JSON
 
 class SimpleFileReader(val chunkSize: Int,
                         val fileName: String
-                ) extends LocalReader with Logging {
+                ) extends LocalReader {
 
 
   var lines: Iterator[String] = null
@@ -62,7 +61,7 @@ class SimpleFileReader(val chunkSize: Int,
   }
 
   private def parse(line:String):Example ={
-    new Example(DocInstance.parse(line))
+    new Example(TextDocInstance.parse(line))
   }
 
 

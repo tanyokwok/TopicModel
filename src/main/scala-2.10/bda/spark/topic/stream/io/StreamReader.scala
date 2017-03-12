@@ -17,7 +17,7 @@
 
 package bda.spark.topic.stream.io
 
-import bda.spark.topic.core.Example
+import bda.spark.topic.core.{Instance, TextDocInstance}
 import org.apache.spark.streaming.StreamingContext
 import org.apache.spark.streaming.dstream.DStream
 
@@ -32,6 +32,6 @@ abstract class StreamReader {
    * @param ssc a Spark Streaming context
    * @return a stream of Examples
    */
-  def getExamples(ssc:StreamingContext): DStream[Example]
+  def getInstances(ssc:StreamingContext): DStream[Instance]
 
 }

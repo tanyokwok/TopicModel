@@ -1,6 +1,7 @@
 package bda.spark.topic.linalg
 
 import breeze.linalg.{*, DenseMatrix, DenseVector}
+import glint.models.client.{BigMatrix, BigVector}
 
 /**
   * Created by Roger on 17/2/26.

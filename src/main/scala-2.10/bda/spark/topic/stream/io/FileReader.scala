@@ -17,29 +17,17 @@
 
 package bda.spark.topic.stream.io
 
-import bda.spark.topic.core.{DocInstance, Example}
+import bda.spark.topic.core.{Example, Instance, TextDocInstance}
+import bda.spark.topic.stream.preprocess.Formatter
 import org.ansj.recognition.impl.StopRecognition
 import org.ansj.splitWord.analysis.ToAnalysis
-import org.apache.spark.Logging
+import org.apache.spark.{Logging, SparkContext}
 import org.apache.spark.rdd.RDD
 import org.apache.spark.streaming.dstream.{DStream, InputDStream}
 import org.apache.spark.streaming.{Duration, StreamingContext, Time}
 
 import scala.io.Source
-import scala.util.parsing.json.JSON
-import collection.JavaConversions._
 
-object StopWordRecognition{
-
-  def getStopRecognition(): StopRecognition={
-    val recognition = new StopRecognition
-    val stops = Source.fromFile("resources/stopword").getLines()
-
-    recognition.insertStopWords(stops.toSeq)
-    recognition.insertStopNatures("null")
-    recognition
-  }
-}
 /**
  * FileReader is used to read data from one file of full data to simulate a stream data.
  *
@@ -53,18 +41,18 @@ object StopWordRecognition{
 
 class FileReader(val chunkSize: Int,
                  val slideDuration: Int,
-                 val fileName: String
+                 val fileName: String,
+                 val formatter: Formatter
                 ) extends StreamReader with Logging {
 
 
-  val recognition =  StopWordRecognition.getStopRecognition()
   var lines: Iterator[String] = null
   /**
    * Get one Exmaple from file
    *
    * @return an Exmaple
    */
-  def getExampleFromFile(): Example = {
+  def getInstanceFromFile(): Instance= {
     if (lines == null || !lines.hasNext) {
       lines = Source.fromFile(fileName).getLines()
     }
@@ -72,12 +60,8 @@ class FileReader(val chunkSize: Int,
     if (!lines.hasNext) {
       lines = Source.fromFile(fileName).getLines()
     }
-    var line = lines.next().replace('\n', ' ').replace('\r', ' ')
-    val content = JSON.parseFull(line).get.asInstanceOf[Map[String, Any]]("c").toString
-    val terms= ToAnalysis.parse(content).
-      recognition(recognition).getTerms.toIterator
-    val segLine = terms.map(_.getName).mkString(" ")
-    new Example(DocInstance.parse(segLine))
+
+    formatter.format(lines.next())
   }
 
   /**
@@ -86,14 +70,15 @@ class FileReader(val chunkSize: Int,
    * @param ssc a Spark Streaming context
    * @return a stream of Examples
    */
-  override def getExamples(ssc: StreamingContext): DStream[Example] = {
-    new InputDStream[Example](ssc) {
+  override def getInstances(ssc: StreamingContext): DStream[Instance] = {
+    new InputDStream[Instance](ssc) {
       override def start(): Unit = {}
 
       override def stop(): Unit = {}
 
-      override def compute(validTime: Time): Option[RDD[Example]] = {
-        val examples: Array[Example] = Array.fill[Example](chunkSize)(getExampleFromFile())
+      override def compute(validTime: Time): Option[RDD[Instance]] = {
+        println(s"Do compute at ${validTime.milliseconds}")
+        val examples: Array[Instance] = Array.fill[Instance](chunkSize)(getInstanceFromFile())
         Some(ssc.sparkContext.parallelize(examples))
       }
 
@@ -101,25 +86,5 @@ class FileReader(val chunkSize: Int,
         new Duration(FileReader.this.slideDuration)
       }
     }
-  }
-}
-
-object TestFileReader{
-
-  def main(args: Array[String]): Unit ={
-    val reader = new FileReader(10000, 10, "data/test_data")
-    var examples = Array.fill[Example](9)(reader.getExampleFromFile())
-
-    examples.zipWithIndex.foreach{
-      case (line, index) =>
-        println( s"$index $line")
-    }
-
-    examples = Array.fill[Example](9)(reader.getExampleFromFile())
-    examples.zipWithIndex.foreach{
-      case (line, index) =>
-        println( s"$index $line")
-    }
-
   }
 }

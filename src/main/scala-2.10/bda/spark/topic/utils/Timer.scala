@@ -3,7 +3,7 @@ package bda.spark.topic.utils
 /**
   * Created by Roger on 17/2/24.
   */
-class Timer {
+class Timer extends Serializable{
 
   val startTime = System.currentTimeMillis()
 

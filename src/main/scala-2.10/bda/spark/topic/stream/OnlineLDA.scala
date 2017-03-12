@@ -48,13 +48,13 @@ class OnlineLDA(val K: Int,
     input.map{
       example =>
         val doc = initTopicAssignment(example, this.model)
-        new Example(new DocInstance(doc))
+        new Example(new TextDocInstance(doc))
     }
   }
 
-  private def doGibbsSampling(docs: RDD[DOC],
+  private def doGibbsSampling(docs: RDD[TextDoc],
                               localModel: OnlineLdaModel):
-  (RDD[(DOC, Array[Int])], Map[String, Array[Int]]) = {
+  (RDD[(TextDoc, Array[Int])], Map[String, Array[Int]]) = {
 
     val (docTopicStatsMat, termTopicStatsMat) = doTopicStatistic(docs)
     val termTopicStatsVec = termTopicStatsMat.map(_._2).reduce{
@@ -66,7 +66,7 @@ class OnlineLDA(val K: Int,
         }
     }
 
-    val newDocs: RDD[DOC] = docTopicStatsMat.map {
+    val newDocs: RDD[TextDoc] = docTopicStatsMat.map {
       case (doc, docTopicStats) =>
         doc.map {
           case (term, topic) =>
@@ -94,9 +94,9 @@ class OnlineLDA(val K: Int,
     doTopicStatistic(newDocs)
   }
 
-  private def createNewModel(docTopicStatsMat: RDD[(DOC, Array[Int])],
-                          termTopicStatsMat: Map[String, Array[Int]],
-                          localModel: OnlineLdaModel): OnlineLdaModel = {
+  private def createNewModel(docTopicStatsMat: RDD[(TextDoc, Array[Int])],
+                             termTopicStatsMat: Map[String, Array[Int]],
+                             localModel: OnlineLdaModel): OnlineLdaModel = {
 
 
     val docTopicStatsVec =
@@ -134,8 +134,8 @@ class OnlineLDA(val K: Int,
     newModel
   }
 
-  private def doTopicStatistic(docs: RDD[DOC]):
-  (RDD[(DOC, Array[Int])], Map[String, Array[Int]]) = {
+  private def doTopicStatistic(docs: RDD[TextDoc]):
+  (RDD[(TextDoc, Array[Int])], Map[String, Array[Int]]) = {
 
     //统计(文档,主题)共现矩阵
     val docTopicStatsMat = docs.map {
@@ -179,9 +179,9 @@ class OnlineLDA(val K: Int,
   }
 
   private def initTopicAssignment(exampleRDD: RDD[Example],
-                                  localModel: OnlineLdaModel): RDD[DOC] = {
+                                  localModel: OnlineLdaModel): RDD[TextDoc] = {
 
-    val docs: RDD[DOC]
+    val docs: RDD[TextDoc]
     = exampleRDD.map {
       example =>
         initTopicAssignment(example, localModel)
@@ -189,9 +189,9 @@ class OnlineLDA(val K: Int,
     docs
   }
 
-  private def initTopicAssignment(example: Example, localModel: OnlineLdaModel): DOC = {
-    val docInstance = example.instance.asInstanceOf[DocInstance]
-    val doc: DOC
+  private def initTopicAssignment(example: Example, localModel: OnlineLdaModel): TextDoc = {
+    val docInstance = example.instance.asInstanceOf[TextDocInstance]
+    val doc: TextDoc
     = docInstance.tokens.map {
       case (term, oldTopic) =>
         if( localModel.prioriBetaStatsMatrix.contains(term)) {
@@ -217,7 +217,7 @@ class OnlineLDA(val K: Int,
   private def checkLocalVocabulary(exampleRDD: RDD[Example]): OnlineLdaModel = {
     val global_term_cnt = exampleRDD.map {
       example =>
-        val docInstance = example.instance.asInstanceOf[DocInstance]
+        val docInstance = example.instance.asInstanceOf[TextDocInstance]
         docInstance.tokens.map(x=>(x._1,1))
     }.flatMap(_.toSeq).reduceByKey(_ + _)
 

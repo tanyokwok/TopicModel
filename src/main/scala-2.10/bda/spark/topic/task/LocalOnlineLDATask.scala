@@ -1,6 +1,5 @@
 package bda.spark.topic.task
 
-import bda.spark.topic.local.OnlineLDA
 import bda.spark.topic.local.io._
 import org.apache.spark.streaming.StreamingContext
 
@@ -13,13 +12,13 @@ class LocalOnlineLDATask {
 
     val reader: LocalReader= new AutoSegFileReader(1000, "/home/gty/data/economy_doc_2016_merge")
     val writer: LocalWriter = new LocalPrintWriter()
-    val learner = new OnlineLDA(10, 1,1 )
+   // val learner = new OnlineLDA(10, 1,1 )
 
     val T = 10000
     Range(0, T).foreach{
       t =>
         val instances = reader.getExamples()
-        learner.train(instances)
+    //    learner.train(instances)
     }
     //Train
     /*val predicts: DStream[String] = learner.assign(instances).map{

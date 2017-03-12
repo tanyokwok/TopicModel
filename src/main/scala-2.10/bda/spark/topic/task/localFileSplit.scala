@@ -2,7 +2,7 @@ package bda.spark.topic.task
 
 import java.io.PrintWriter
 
-import bda.spark.topic.core.{DocInstance, Example}
+import bda.spark.topic.core.{TextDocInstance$, Example}
 import bda.spark.topic.local.io.StopWordRecognition
 import org.ansj.splitWord.analysis.ToAnalysis
 

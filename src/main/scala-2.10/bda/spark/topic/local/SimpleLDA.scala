@@ -13,9 +13,10 @@ import scala.util.Random
 /**
   * Created by Roger on 17/2/24.
   */
-class SimpleLDA(val K: Int,
-                val alpha: Int,
-                val beta: Int) {
+class SimpleLDA(override val K: Int,
+                override val alpha: Int,
+                override val beta: Int)
+extends LdaTrainer(K, alpha, beta){
 
   var model: SimpleLdaModel = null
 
@@ -79,7 +80,7 @@ class SimpleLDA(val K: Int,
     }
 
 
-    var predict = new ArrayBuffer[Seq[DOC]]()
+    var predict = new ArrayBuffer[Seq[TextDoc]]()
     Range(0, S*2).foreach{
       s =>
       val newDocs = doGibbsSampling(docs, termTopicStatsMat, word2id)
@@ -160,28 +161,16 @@ class SimpleLDA(val K: Int,
 
   }
 
-  private def initTopicAssignment(example: Example): DOC = {
-    val docInstance = example.instance.asInstanceOf[DocInstance]
+  protected def initTopicAssignment(example: Example): TextDoc = {
+    val docInstance = example.instance.asInstanceOf[TextDocInstance]
 
-    var postTopicStatsVec: DenseVector[Int] = null
-    if (this.model != null) {
-      postTopicStatsVec = Utils.foldVectors(this.model.betaStatsMatrix)
-    }
     docInstance.tokens.map {
       case (term, topic) =>
-        /*if (this.model != null && this.model.vocabulary.contains(term)) {
-          val wid = this.model.word2id(term)
-          val pw_z = this.model.betaStatsMatrix(wid, ::).inner.toArray.map(_.toDouble)
-          (term, CollapsedGibbsSampler.sample(pw_z))
-        } else {
-          // 如果模型中没有改词汇的信息
-          (term, Math.abs(Random.nextInt()) % K)
-        }*/
-          (term, Math.abs(Random.nextInt()) % K)
+        (term, Math.abs(Random.nextInt() % K))
     }
   }
 
-  private def initTopicAssignment(examples: Seq[Example]):Seq[DOC]= {
+  private def initTopicAssignment(examples: Seq[Example]):Seq[TextDoc]= {
     examples.map {
       example =>
         val doc =initTopicAssignment(example)
@@ -194,14 +183,14 @@ class SimpleLDA(val K: Int,
 
     val vocab = examples.map{
       example =>
-        val docInstance = example.instance.asInstanceOf[DocInstance]
+        val docInstance = example.instance.asInstanceOf[TextDocInstance]
         docInstance.tokens.map(_._1).toSet
     }.flatMap(_.toSeq).toSet
 
     vocab.toSeq.sorted.zipWithIndex.toMap
   }
 
-  private def doTopicStatistic(docs: Seq[DOC], word2id: Map[String, Int]):
+  private def doTopicStatistic(docs: Seq[TextDoc], word2id: Map[String, Int]):
   DenseMatrix[Int] = {
      val termTopicStatsMat: DenseMatrix[Int] = DenseMatrix.fill[Int](word2id.size, K)(0)
     //统计(词项,主题)共现矩阵
@@ -221,12 +210,12 @@ class SimpleLDA(val K: Int,
     termTopicStatsMat
   }
 
-  private def doGibbsSampling(docs: Seq[DOC], betaStatsMatrix: DenseMatrix[Int], word2id: Map[String,Int]):
-  ArrayBuffer[DOC] = {
+  private def doGibbsSampling(docs: Seq[TextDoc], betaStatsMatrix: DenseMatrix[Int], word2id: Map[String,Int]):
+  ArrayBuffer[TextDoc] = {
 
     val corpusTopicStatsVec = Utils.foldVectors(betaStatsMatrix)
 
-    val newDocs = mutable.ArrayBuffer[DOC]()
+    val newDocs = mutable.ArrayBuffer[TextDoc]()
     docs.foreach{
       doc =>
         val docTopicStats = DenseVector.fill[Int](K)(0)

@@ -17,7 +17,7 @@
 
 package bda.spark.topic.local.io
 
-import bda.spark.topic.core.{DocInstance, Example}
+import bda.spark.topic.core.{Example, TextDocInstance, TextDocInstance$}
 import org.ansj.recognition.impl.StopRecognition
 import org.ansj.splitWord.analysis.ToAnalysis
 import org.apache.spark.Logging
@@ -79,7 +79,7 @@ class AutoSegFileReader(val chunkSize: Int,
     val terms = ToAnalysis.parse(content).
       recognition(recognition).getTerms.toIterator
     val segLine = terms.map(_.getName).mkString(" ")
-    new Example(DocInstance.parse(segLine))
+    new Example(TextDocInstance.parse(segLine))
   }
 
 
