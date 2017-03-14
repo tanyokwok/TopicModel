@@ -21,26 +21,18 @@ import scala.util.{Random, Try}
 /**
   * Implement according to Alex Smola 2010
   */
-class DistributedParallelLDA(val V:Long,
-                             override val K: Int,
-                             override val alpha: Int,
-                             override val beta: Int,
+class DistributedParallelLDA(
+                             val model: PsLdaModel,
                              val max_buff_size: Int = 12800,
                              val semaphore: Int = 16)
-  extends LdaTrainer(K, alpha, beta) with Serializable with Logging{
+  extends LdaTrainer(model.K, model.alpha, model.beta) with Serializable with Logging{
 
-  var model: PsLdaModel = null
-
-  val host: String = "bda07"
-  val port: Int = 30001
-  val maxVocabSize = 1000000L
   @transient val client = Client()
 
   def train(input: RDD[Example], test: RDD[Example], iteration: Int): Unit = {
     var global_corpus = initTopicAssignment(input)
-    val (termTopicStatMat, topicStatVec) = doTopicStatistic(global_corpus)
+    doTopicStatistic(global_corpus)
 
-    this.model = new PsLdaModel(K, beta, alpha, termTopicStatMat, topicStatVec)
 
     val timer = new Timer()
     println(s"Start trainning, time = ${timer.getReadableRunnningTime()}")
@@ -74,20 +66,14 @@ class DistributedParallelLDA(val V:Long,
     }
   }
 
-  def doTopicStatistic(docs: RDD[IdDoc]): (BigMatrix[Double], BigVector[Double]) = {
+  def doTopicStatistic(docs: RDD[IdDoc]) {
     println("Start topic statistic")
 
-    println(s"V = $V")
     import scala.concurrent.ExecutionContext.Implicits.global
     client.serverList().map{
       case value =>
         println(value.size)
     }
-
-    assert(V != 0)
-    // 确保V不是0,否则会出错
-    val termTopicStatsMat = client.matrix[Double](V, K)
-    val topicStatsVector = client.vector[Double](K)
 
     println("BigMatrix and BigVector was created")
     //统计(词频,主题)共现矩阵
@@ -115,15 +101,13 @@ class DistributedParallelLDA(val V:Long,
         }
 
         println("[INFO] push data to parameter server")
-        pushData(termTopicStatsMat, termTopicStats)
+        pushData(model.betaStatsMatrix, termTopicStats)
 
         Await.result(
-          topicStatsVector.push(topicColIndices.toArray, topicValues.toArray),
+          model.topicStatsVector.push(topicColIndices.toArray, topicValues.toArray),
           Duration.Inf
         )
     }
-
-    (termTopicStatsMat, topicStatsVector)
   }
 
   def doGibbsSampling(docs: Array[IdDoc],
@@ -166,7 +150,7 @@ class DistributedParallelLDA(val V:Long,
               docTopicStats,
               global_ntw(wid),
               global_nt,
-              alpha, beta, V
+              alpha, beta, model.V
             )
 
             docTopicStats(ntopic) += 1
@@ -187,8 +171,6 @@ class DistributedParallelLDA(val V:Long,
             value != 0
         }.map( x => (wid, x._2, x._1))
     }
-
-    assert( indices.filter( x => x._1 < 0 || x._2 < 0 || x._1 >= V || x._2 >= K ).size == 0 )
 
     println("[INFO] push data to parameter server")
     pushData(termTopicStatsMat, indices)

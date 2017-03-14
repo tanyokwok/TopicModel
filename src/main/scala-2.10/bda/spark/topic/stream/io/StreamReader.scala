@@ -18,6 +18,7 @@
 package bda.spark.topic.stream.io
 
 import bda.spark.topic.core.{Instance, TextDocInstance}
+import com.github.javacliparser.Configurable
 import org.apache.spark.streaming.StreamingContext
 import org.apache.spark.streaming.dstream.DStream
 
@@ -25,7 +26,7 @@ import org.apache.spark.streaming.dstream.DStream
  * Abstract class for outputing a DStream of Examples to be used 
  * inside tasks.
  */
-abstract class StreamReader {
+abstract class StreamReader extends Configurable{
   /**
    * Obtains a stream of examples.
    *

@@ -1,15 +1,21 @@
 package bda.spark.topic.redis
 
 import org.scalatest.FunSuite
+import redis.clients.jedis.{HostAndPort, JedisCluster}
 
+import scala.collection.immutable.HashSet
+import collection.JavaConversions._
 /**
   * Created by Roger on 17/3/6.
   */
 class RedisVocabClientSuite extends FunSuite{
 
   test("RedisVocabClient") {
-    RedisVocabClient.clear("localhost", 30001)
-    val client = RedisVocabClient("localhost", 30001, 2L)
+
+    val jedisNodes = HashSet[HostAndPort](new HostAndPort("localhost", 30001))
+    val jedis = new JedisCluster(jedisNodes)
+    val client = RedisVocabClient( 2L, jedis)
+    client.clear()
     assert( client.vocabSize == 0)
     var gorgeId = client.getTerm("gorge", 0L)
     assert(gorgeId == -1)

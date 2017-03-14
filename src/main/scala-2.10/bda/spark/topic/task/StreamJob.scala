@@ -17,19 +17,17 @@
 
 package bda.spark.topic.task
 
-import org.apache.spark._
-import org.apache.spark.streaming._
+import com.github.javacliparser.ClassOption
 
-/**
- * The main entry point for testing StreamDM by running tasks on Spark
- * Streaming.
- */
-object localDMJob {
+object StreamJob {
 
-  def main(args: Array[String]) {
+  def main(args: Array[String]): Unit = {
 
-    val task = new LocalOnlineLDATask()
     //run task
+    val string = if (args.length > 0) args.mkString(" ")
+                  else "StreamLdaTask"
+
+    val task = ClassOption.cliStringToObject(string, classOf[Task], null)
     task.run()
   }
 }

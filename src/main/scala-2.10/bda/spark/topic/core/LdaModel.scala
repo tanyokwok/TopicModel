@@ -17,13 +17,21 @@
 
 package bda.spark.topic.core
 
+import java.util
+
 import bda.spark.topic.glint.Glint
+import bda.spark.topic.redis.{RedisLock, RedisVocabClient}
 import breeze.linalg.{DenseMatrix, DenseVector}
+import com.typesafe.config.ConfigFactory
 
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.collection.mutable
 import glint._
-import glint.models.client.{BigMatrix, BigVector};
+import glint.models.client.{BigMatrix, BigVector}
+import redis.clients.jedis.{HostAndPort, JedisCluster}
+
+import collection.JavaConversions._
+import scala.collection.immutable.HashSet
 
 /**
   * Latent Dirichlet Allocation (LDA) model.
@@ -34,9 +42,9 @@ import glint.models.client.{BigMatrix, BigVector};
 abstract class LdaModel() extends Serializable{
   def K: Int
 
-  def ALPHA: Int
+  def alpha: Int
 
-  def BETA: Int
+  def beta: Int
 
   def vocabulary: Set[String]
 
@@ -64,15 +72,15 @@ class OnlineLDAModel(override val k:Int,
 
 /**
   * @param K     Number of topics
-  * @param ALPHA alpha for the prior placed on documents'
+  * @param alpha alpha for the prior placed on documents'
   *              distributions over topics ("theta").
   *              This is the parameter to a Dirichlet distribution.
-  * @param BETA beta for the prior placed on topics' distributions over terms.
+  * @param beta beta for the prior placed on topics' distributions over terms.
   */
 class OnlineLdaModel(val iteration: Int,
                      override val K: Int,
-                     override val ALPHA: Int,
-                     override val BETA:Int,
+                     override val alpha: Int,
+                     override val beta:Int,
                      val prioriAlphaStatsVector: Array[Int],
                      val prioriBetaStatsMatrix: Map[String, Array[Int]]
                     ) extends LdaModel with Serializable{
@@ -112,8 +120,8 @@ class OnlineLdaModel(val iteration: Int,
 
 
 class SimpleLdaModel(override val K:Int,
-                     override val ALPHA:Int,
-                     override val BETA: Int,
+                     override val alpha:Int,
+                     override val beta: Int,
                      val betaStatsMatrix: DenseMatrix[Int],
                      val word2id: Map[String, Int]
                     ) extends LdaModel with Serializable{
@@ -140,22 +148,58 @@ class SimpleLdaModel(override val K:Int,
 }
 
 class PsLdaModel(override val K:Int,
-                 override val ALPHA:Int,
-                 override val BETA: Int,
-                 val betaStatsMatrix: BigMatrix[Double],
-                 val topicStatsVector: BigVector[Double]) extends LdaModel{
-  override def vocabulary: Set[String] = null
+                 override val alpha:Int,
+                 override val beta: Int,
+                 val redisVocab: RedisVocabClient
+                ) extends LdaModel{
+  def V = redisVocab.vocabSize
+  @transient
+  val client = glint.Client(ConfigFactory.parseFile(new java.io.File("resources/glint.conf")))
+  val betaStatsMatrix: BigMatrix[Double] = client.matrix[Double](V, K)
+  val topicStatsVector: BigVector[Double] = client.vector[Double](K)
+
+  override def vocabulary: Set[String] = {
+    redisVocab.fetchLock("PsLdaModel")
+    val ret = redisVocab.loadVocab.values
+    redisVocab.relaseLock("PsLdaModel")
+    ret.toSet
+  }
 
   override def topicWords(T: Int): Seq[QUEUE] = ???
 }
 
 class PsStreamLdaModel(val K: Int,
                        val V: Long,
-                       val alpha: Int,
-                       val beta: Int) extends Serializable{
+                       val alpha: Double,
+                       val beta: Double,
+                       val host: String,
+                       val port: Int
+                      ) extends Serializable{
+
+
+  private val lockKey = "lda.ps.lock"
+  private val jedisClusterNodes = HashSet[HostAndPort](new HostAndPort(host, port))
+
 
   @transient
-  val client = glint.Client()
+  lazy val jedis = {
+    new JedisCluster(jedisClusterNodes)
+  }
+
+  @transient
+  lazy val lock = {
+    val jedis: JedisCluster = new JedisCluster(jedisClusterNodes)
+    val ret = new RedisLock(jedis, lockKey)
+    ret
+  }
+
+  @transient
+  lazy val redisVocab = RedisVocabClient(V, jedis)
+
+  redisVocab.clear()
+
+  @transient
+  val client = glint.Client(ConfigFactory.parseFile(new java.io.File("resources/glint.conf")))
   val priorWordTopicCountMat: BigMatrix[Double] = client.matrix[Double](V, K)
   val priorTopicCountVec: BigVector[Double] = client.vector[Double](K)
 
@@ -163,25 +207,33 @@ class PsStreamLdaModel(val K: Int,
     priorTopicCountVec.destroy()
     priorWordTopicCountMat.destroy()
     client.stop()
+    redisVocab.clear()
+    lock.clear()
   }
-  type TOPICASSIGN = (Long, Double)
+
+  type TOPICASSIGN = (String, Double)
   type QUEUE = mutable.PriorityQueue[TOPICASSIGN]
 
   def topicWords(T:Int) = {
     val queues = Array.fill[QUEUE](K)(new QUEUE()(Ordering.by(-_._2)))
 
-    val matrix = Glint.pullData((0L until V).toArray, priorWordTopicCountMat)
+    val lockToken = "PsStreamLdaModel"
+    redisVocab.fetchLock(lockToken)
+    val id2word = redisVocab.loadVocab
+
+    val matrix = Glint.pullData(id2word.map(_._1).toArray, priorWordTopicCountMat)
 
     matrix.foreach{
-      case (term, vec) =>
+      case (wid, vec) =>
         Range(0, K).foreach{
           k =>
-            queues(k).enqueue((term, vec(k)))
+            queues(k).enqueue((id2word(wid), vec(k)))
             if (T < queues(k).size) {
               queues(k).dequeue()
             }
         }
     }
+    redisVocab.relaseLock(lockToken)
     queues
   }
 

@@ -15,8 +15,7 @@ import scala.util.Random
   */
 object VocabManagerSuite {
   val vocabSize =40L
-
-  val ldaModel = new PsStreamLdaModel(10 ,vocabSize, 1, 1)
+  val ldaModel = new PsStreamLdaModel(10 , vocabSize, 1, 1, "localhost", 30001)
   def example(time: Long, id : Int): Unit = {
 
     //println(s"Running at time : $time ")
@@ -30,8 +29,7 @@ object VocabManagerSuite {
 
     val formatter = new Formatter()
 
-    val client = RedisVocabClient("localhost", 30001, vocabSize)
-    val vocabManager = new VocabManager(client,ldaModel, s"thread-$id-$time")
+    val vocabManager = new VocabManager(ldaModel, s"thread-$id-$time")
     val input = data( Math.abs(Random.nextInt() % 2 )).map(formatter.format(_))
     val output = vocabManager.transfrom(input.toIterator, time)
     println(s"Thread $id wait for 2s")
@@ -41,13 +39,9 @@ object VocabManagerSuite {
         println( "line " + line)
     }*/
     vocabManager.relaseUsage()
-    client.close()
   }
 
   def main(args: Array[String]) {
-
-    RedisVocabClient.clear("localhost", 30001)
-    assert( RedisVocabClient.vocabSize("localhost", 30001) == 0L)
 
     example(0, 0)
     class TestThread(time: Long, id: Int) extends Runnable{
@@ -72,9 +66,7 @@ object VocabManagerSuite {
     }
 
     ldaModel.destroy()
-    val client = RedisVocabClient("localhost", 30001, vocabSize)
-    val allCounters: util.Map[String, String] = client.jedis.hgetAll(RedisVocabClient.countKey)
-    client.close()
+    val allCounters: util.Map[String, String] = ldaModel.jedis.hgetAll("lda.vocab.count")
 
     println(allCounters.toMap.mkString(" "))
     assert( allCounters.toMap.map(x=>x._2.toInt).filter( _ != 0 ).size == 0)

@@ -19,6 +19,7 @@ package bda.spark.topic.stream.io
 
 import bda.spark.topic.core.{Example, Instance, TextDocInstance}
 import bda.spark.topic.stream.preprocess.Formatter
+import com.github.javacliparser.{ClassOption, Configurable, IntOption, StringOption}
 import org.ansj.recognition.impl.StopRecognition
 import org.ansj.splitWord.analysis.ToAnalysis
 import org.apache.spark.{Logging, SparkContext}
@@ -39,12 +40,26 @@ import scala.io.Source
  * </ul>
  */
 
-class FileReader(val chunkSize: Int,
-                 val slideDuration: Int,
-                 val fileName: String,
-                 val formatter: Formatter
-                ) extends StreamReader with Logging {
+class FileReader extends StreamReader {
 
+
+  val chunkSizeOption: IntOption = new IntOption("chunkSize", 'k',
+    "Chunk Size", 10000, 1, Integer.MAX_VALUE)
+
+  val slideDurationOption: IntOption = new IntOption("slideDuration", 'd',
+    "Slide Duration in milliseconds", 20000, 1, Integer.MAX_VALUE)
+
+  val fileNameOption: StringOption = new StringOption("fileName", 'f',
+    "File Name", "data/economy_sent_docs_2016_mini")
+
+  val formatterOption: ClassOption = new ClassOption("formatter", 't',
+    "the formatter for input lines",
+    classOf[Formatter], "Formatter")
+
+  val chunkSize = chunkSizeOption.getValue
+  val slideDuration = slideDurationOption.getValue
+  val fileName = fileNameOption.getValue
+  val formatter = formatterOption.getValue[Formatter]
 
   var lines: Iterator[String] = null
   /**
@@ -77,7 +92,6 @@ class FileReader(val chunkSize: Int,
       override def stop(): Unit = {}
 
       override def compute(validTime: Time): Option[RDD[Instance]] = {
-        println(s"Do compute at ${validTime.milliseconds}")
         val examples: Array[Instance] = Array.fill[Instance](chunkSize)(getInstanceFromFile())
         Some(ssc.sparkContext.parallelize(examples))
       }

@@ -18,8 +18,8 @@ class LDAModelSuite extends FunSuite{
     )
 
     assert( model.K == k)
-    assert( model.ALPHA == alpha)
-    assert( model.BETA == beta)
+    assert( model.alpha == alpha)
+    assert( model.beta == beta)
     assert( model.prioriAlphaStatsVector.sum == k * alpha )
     assert( model.prioriBetaStatsVector.sum == 0 )
   }
@@ -37,8 +37,8 @@ class LDAModelSuite extends FunSuite{
     )
 
     assert( model.K == k)
-    assert( model.ALPHA == alpha)
-    assert( model.BETA == beta)
+    assert( model.alpha == alpha)
+    assert( model.beta == beta)
     assert( model.prioriAlphaStatsVector.sum == k * alpha )
     assert( model.prioriBetaStatsVector.sum == k*beta*4 )
     assert( model.prioriBetaStatsVector(0) == 4 )

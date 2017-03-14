@@ -25,9 +25,8 @@ libraryDependencies += "ch.ethz.inf.da" %% "glint" % "0.1-SNAPSHOT"
 
 libraryDependencies += "redis.clients" % "jedis" % "2.9.0"
 
-libraryDependencies += "org.redisson" % "redisson" % "2.8.1"
-
 libraryDependencies += "io.netty" % "netty-transport-native-epoll" % "4.1.0.CR3"
+
 libraryDependencies  ++= Seq(
   // Native libraries are not included by default. add this if you want them (as of 0.7)
   // Native libraries greatly improve performance, but increase jar sizes.

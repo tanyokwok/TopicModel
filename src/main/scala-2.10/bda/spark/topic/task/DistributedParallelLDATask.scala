@@ -25,9 +25,11 @@ import bda.spark.topic.utils.Timer
 import org.apache.spark._
 import org.apache.spark.rdd.RDD
 import org.apache.spark.streaming._
+import redis.clients.jedis.{HostAndPort, JedisCluster}
 
+import scala.collection.immutable.HashSet
 import scala.collection.mutable
-
+import collection.JavaConversions._
 
 /**
   * Created by Roger on 17/2/22.
@@ -45,7 +47,10 @@ class DistributedParallelLDATask extends Serializable{
 
     val timer = new Timer()
 
-    RedisVocabClient.clear(host, port)
+    val jedisNodes = HashSet[HostAndPort](new HostAndPort(host, port))
+    val jedis = new JedisCluster(jedisNodes)
+    val redisVocab = RedisVocabClient(maxVocabSize, jedis)
+    redisVocab.clear()
     def buildVocab(examples: Seq[Example]): mutable.LinkedHashMap[String, Long] ={
       println("Building vocab for partition " + timer.getReadableRunnningTime())
 
@@ -55,14 +60,15 @@ class DistributedParallelLDATask extends Serializable{
           val words = textDocInstance.tokens.map(_._1).distinct
           words
       }.flatMap(_.toSeq).distinct
-      val redisVocabClient = RedisVocabClient(host, port, maxVocabSize)
+      val jedisNodes = HashSet[HostAndPort](new HostAndPort(host, port))
+      val jedis = new JedisCluster(jedisNodes)
+      val redisVocabClient = RedisVocabClient(maxVocabSize, jedis)
       val word2id = mutable.LinkedHashMap[String, Long]() // thread safe
       vocab.foreach{
         word =>
           val wid = redisVocabClient.getTerm(word, 0L)
           word2id += ((word, wid))
       }
-      redisVocabClient.close()
 
       println("Building vocab for partition success at " + timer.getReadableRunnningTime())
       word2id
@@ -91,11 +97,11 @@ class DistributedParallelLDATask extends Serializable{
 
     examples.cache()
 
-    val V: Long = RedisVocabClient.vocabSize(host, port)
-    println(V)
-    val learner = new DistributedParallelLDA(V, 10, 1,1, buffsize, semaphore)
+    val model = new PsLdaModel(10, 1, 1, redisVocab)
+    val learner = new DistributedParallelLDA(model, buffsize, 10)
     learner.train(examples, null, iteration)
     println("End Training")
+
   }
 
 

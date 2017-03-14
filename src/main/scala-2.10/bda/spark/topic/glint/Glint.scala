@@ -86,14 +86,25 @@ object Glint {
     Await.result(result, Duration.Inf)
   }
 
+  def pushData(deltaMat: Map[Long, Array[Double]], matrix: BigMatrix[Double]): Unit = {
+    val delta = deltaMat.flatMap{
+      case (wid, vec) =>
+        vec.zipWithIndex.filter(_._1 > 0).map{
+          case (value, index)=>
+            (wid, index, value)
+        }
+    }
+
+    pushData(delta, matrix)
+  }
+
   def pushData(deltaVec: Array[Double], vector: BigVector[Double]): Unit ={
     val col = vector.size
     val result = vector.push((0L until col.toLong).toArray, deltaVec)
     Await.result(result, Duration.Inf)
   }
-  def pushData(matrix: BigMatrix[Double],
-               topicCount: Iterable[(Long, Int, Int)]
-               ): Unit = {
+  def pushData(topicCount: Iterable[(Long, Int, Double)],
+               matrix: BigMatrix[Double]): Unit = {
     val lock = new java.util.concurrent.Semaphore(semaphore)
     val rowIndices = new ArrayBuffer[Long]()
     val colIndices = new ArrayBuffer[Int]()

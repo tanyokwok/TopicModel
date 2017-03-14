@@ -4,9 +4,6 @@ package bda.spark.topic.redis
 import java.lang.Long
 import java.util
 
-import org.redisson.Redisson
-import org.redisson.api.RLock
-import org.redisson.config.Config
 import redis.clients.jedis.{HostAndPort, JedisCluster, Tuple}
 
 import collection.JavaConversions._
@@ -15,14 +12,25 @@ import scala.collection.immutable.HashSet
 /**
   * Created by Roger on 17/3/5.
   */
-class RedisVocabClient(val MAX_SIZE: Long,
+class RedisVocabClient(val maxVocabSize: Long,
                        val jedis: JedisCluster)
                         extends Serializable{
 
-  val lock = new RedisLock(jedis, RedisVocabClient.lockKey)
-  val vocabKey = RedisVocabClient.vocabKey
-  val timeKey = RedisVocabClient.timeKey
-  val countKey = RedisVocabClient.countKey
+  val vocabKey = "lda.vocab"
+  val timeKey = "lda.vocab.age"
+  val lockKey = "lda.vocab.lock"
+  val countKey = "lda.vocab.count"
+
+  val lock = new RedisLock(jedis, lockKey)
+
+  def clear() {
+    jedis.del(vocabKey)
+    jedis.del(timeKey)
+    jedis.del(countKey)
+    jedis.del(lockKey)
+  }
+
+  def loadVocab = jedis.hgetAll(vocabKey).map(x=>(x._2.toLong, x._1))
 
   /**
     * 如果找到则返回ID, 并打上最新时间戳
@@ -108,7 +116,7 @@ class RedisVocabClient(val MAX_SIZE: Long,
     */
   private def addOrReplace(term: String, time: Long): Long ={
     val curVocabSize = vocabSize
-    if (curVocabSize < MAX_SIZE) {
+    if (curVocabSize < maxVocabSize) {
       val ret: Long = jedis.hsetnx(vocabKey, term, curVocabSize.toString)
       if (ret == 0) {
         jedis.hget(vocabKey, term).toLong
@@ -184,7 +192,11 @@ class RedisVocabClient(val MAX_SIZE: Long,
     return null
   }
 
-  def close(): Unit = {
+  override def finalize(): Unit ={
+    close()
+  }
+
+  private def close(): Unit = {
     jedis.close()
   }
 
@@ -192,39 +204,9 @@ class RedisVocabClient(val MAX_SIZE: Long,
 
 
 object RedisVocabClient {
-  val vocabKey = "lda.vocab"
-  val timeKey = "lda.vocab.age"
-  val lockKey = "lda.vocab.lock"
-  val countKey = "lda.vocab.count"
 
-  def clear(host: String = "localhost",
-            port: Int = 0): Unit ={
-    val jedisClusterNodes = HashSet[HostAndPort](new HostAndPort(host, port))
-    val jedis = new JedisCluster(jedisClusterNodes)
-    jedis.del(vocabKey)
-    jedis.del(timeKey)
-    jedis.del(countKey)
-    jedis.del(lockKey)
-    jedis.close()
-  }
-
-  def vocabSize(host: String = "localhost",
-                port: Int = 0): Long = {
-
-    val jedisClusterNodes = HashSet[HostAndPort](new HostAndPort(host, port))
-    val jedis = new JedisCluster(jedisClusterNodes)
-    val size = jedis.hlen(vocabKey)
-    jedis.close()
-    size
-  }
-
-  def apply(host: String = "localhost",
-            port: Int = 0,
-            maxSize: Long = 1000000L):RedisVocabClient = {
-
-    val jedisClusterNodes = HashSet[HostAndPort](new HostAndPort(host, port))
-    val jedis = new JedisCluster(jedisClusterNodes)
-
+  def apply(maxSize: Long = 1000000L,
+            jedis: JedisCluster):RedisVocabClient = {
     val client = new RedisVocabClient(maxSize, jedis)
     client
   }

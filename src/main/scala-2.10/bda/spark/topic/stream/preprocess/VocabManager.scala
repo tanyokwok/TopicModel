@@ -3,6 +3,7 @@ package bda.spark.topic.stream.preprocess
 import bda.spark.topic.core.{IdDocInstance, Instance, PsStreamLdaModel, TextDocInstance}
 import bda.spark.topic.glint.Glint
 import bda.spark.topic.redis.RedisVocabClient
+import bda.spark.topic.utils.Timer
 
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
@@ -10,16 +11,20 @@ import scala.collection.mutable.ArrayBuffer
 /**
   * TODO: 替换单词的同时删除参数服务器中对应的行
   */
-class VocabManager(val redisVocab: RedisVocabClient,
-                   val ldaModel: PsStreamLdaModel,
+class VocabManager(val ldaModel: PsStreamLdaModel,
                   val token: String) {
 
   val word2id = new mutable.HashMap[String, Long]()
+  val redisVocab: RedisVocabClient = ldaModel.redisVocab
 
   def transfrom(input: Iterator[Instance], time: Long): Seq[IdDocInstance] = {
+
+    val timer = new Timer()
     val examples = input.toSeq
 
+    println(s"[VocabManager-$time] build vocabulary at time ${timer.getReadableRunnningTime()}")
     buildVocab(examples, time)
+    println(s"[VocabManager-$time] build vocabulary success at time ${timer.getReadableRunnningTime()}")
 
     examples.map {
       example =>
@@ -64,6 +69,9 @@ class VocabManager(val redisVocab: RedisVocabClient,
 
   private def buildVocab(examples: Seq[Instance], time: Long){
 
+    val timer = new Timer()
+
+    println(s"[Build Vocab] at ${timer.getReadableRunnningTime()}")
     //计算词汇集和词频
     val vocab_freq = examples.map{
       example =>
@@ -77,6 +85,7 @@ class VocabManager(val redisVocab: RedisVocabClient,
         (word, freq)
     }
 
+    println(s"[Build Vocab] try to fetch lock at ${timer.getReadableRunnningTime()}")
     //获取词表锁,开始操作词表
     redisVocab.fetchLock(token)
     val word_freq2id = new ArrayBuffer[((String, Int), Long)]() // thread safe
@@ -99,6 +108,7 @@ class VocabManager(val redisVocab: RedisVocabClient,
     }
 
     word2id ++= knwWord.map(entry => (entry._1._1, entry._2)).toMap
+    println(s"[Build Vocab] try to push data at ${timer.getReadableRunnningTime()}")
     //获取新词ID,并且添加词汇计数
     if (unkWord.size > 0) {
       var flag = true
@@ -125,6 +135,7 @@ class VocabManager(val redisVocab: RedisVocabClient,
       }.toMap
     }
 
+    println(s"[Build Vocab] try to release lock at ${timer.getReadableRunnningTime()}")
     //val nt = Glint.pullData((0L until 10L).toArray, ldaModel.priorTopicCountVec)
     //println( nt.mkString(" "))
 

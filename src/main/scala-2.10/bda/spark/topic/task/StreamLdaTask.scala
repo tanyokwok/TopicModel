@@ -4,50 +4,73 @@ import bda.spark.topic.core.PsStreamLdaModel
 import bda.spark.topic.stream.{StreamLda, StreamLdaLearner}
 import bda.spark.topic.stream.io.{FileReader, StreamReader}
 import bda.spark.topic.stream.preprocess.Formatter
+import com.github.javacliparser._
 import org.apache.spark.SparkConf
 import org.apache.spark.streaming.{Seconds, StreamingContext}
 
 /**
   * Created by Roger on 17/3/11.
   */
-object StreamLdaTask {
+class StreamLdaTask extends Task{
 
-  def main(args: Array[String]): Unit = {
+  val hostOpt = new StringOption("host", 'h', "the host of redis master", "bda07")
+  val portOpt = new IntOption("port", 'p', "the port of redis master", 30001, 0, Int.MaxValue)
+  val vocabSizeOpt = new IntOption("vocab", 'V', "the max size of vocabulary",
+    1000000, 1, Int.MaxValue)
 
-    val formatter = new Formatter()
-    val streamReader = new FileReader(10000, 10000, "data/economy_sent_docs_2016_mini", formatter) // ms
-    println("Build lda model")
-    val ldaModel = new PsStreamLdaModel(10, 10000000L, 1, 1)
-    val learner = new StreamLdaLearner(10, ldaModel)
+  val topicNumOpt = new IntOption("topic", 'K', "number of topics",
+    10, 1, Int.MaxValue)
 
-    val host = "bda07"
-    val port = 30001
+  val alphaOpt = new FloatOption("alpha", 'a', "the hyper parameter alpha of LDA", 1, 0, Float.MaxValue)
+  val betaOpt = new FloatOption("beta", 'b', "the hyper parameter beta of LDA", 1, 0, Float.MaxValue)
+  val rateOpt = new FloatOption("learn_rate", 'r', "the learning rate for Stream LDA", 0.8, 0.5, 1)
 
-    println("Build Stream LDA")
-    val lda = new StreamLda(host, port, learner)
-   //configuration and initialization of model
-    val conf = new SparkConf().setAppName("streamDM")
-    conf.setMaster("local[5]")
+  val iterOpt = new IntOption("batch_iter", 'i', "the iteration for each batch", 10, 1, Int.MaxValue)
 
-    println("Build stream context")
-    val ssc = new StreamingContext(conf, Seconds(10))
+  val streamReaderOpt = new ClassOption("StreamReader", 's', "the producer of stream",
+    classOf[StreamReader], "FileReader")
 
-    println("Build stream reader")
+  val timeOutOpt = new IntOption("time_out", 't',
+    "the time out of spark network", 600, 100, Int.MaxValue)
+
+  override def run() {
+    val host = hostOpt.getValue
+    val port = portOpt.getValue
+    val K = topicNumOpt.getValue
+    val V = vocabSizeOpt.getValue
+    val alpha = alphaOpt.getValue
+    val beta = betaOpt.getValue
+
+    val ldaModel = new PsStreamLdaModel(K, V, alpha, beta, host, port)
+    val learner = new StreamLdaLearner(iterOpt.getValue, rateOpt.getValue, ldaModel)
+
+    val streamReader = streamReaderOpt.getValue[StreamReader]
+
+    val lda = new StreamLda(learner)
+    //configuration and initialization of model
+    val conf = new SparkConf().setAppName("StreamLda")
+    //   conf.setMaster("local[5]")
+    conf.set("spark.network.timeout", s"${timeOutOpt.getValue}s")
+
+    val ssc = new StreamingContext(conf, Seconds(20))
+
     val stream = streamReader.getInstances(ssc)
 
     stream.cache()
 
-    println("Do lda train")
     val output = lda.train(stream)
 
-    output.foreachRDD{
+    output.foreachRDD {
       rdd =>
-        println(s"Output topic assign at ${rdd.id}, size : ${rdd.count()}")
-        rdd.take(10).foreach(println)
-        println("Output topic assign END")
+        println(s"n(RDD): ${rdd.count()}")
+        println("Output Topic Words")
+        ldaModel.topicWords(10).foreach(println)
     }
     ssc.start()
     ssc.awaitTermination()
     ldaModel.destroy()
+
   }
 }
+
+
