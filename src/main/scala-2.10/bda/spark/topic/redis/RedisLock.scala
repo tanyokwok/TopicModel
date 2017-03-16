@@ -1,21 +1,20 @@
 package bda.spark.topic.redis
 
-import java.util
-
 import redis.clients.jedis.JedisCluster
-
+import collection.JavaConversions._
 /**
   * Created by Roger on 17/3/10.
   */
 class RedisLock(jedis: JedisCluster,
-                lockKey: String) {
+                lockKey: String,
+                expired: Long) {
 
   def clear(): Unit ={
     jedis.del(lockKey)
   }
 
   def fetchLock(token: String): Unit = {
-    while (jedis.setnx(lockKey, token) == 0) {
+    while (jedis.set(lockKey, token, "NX", "PX", expired) == 0) {
       Thread.sleep(100)
       //println(s"$token wait for lock")
     }

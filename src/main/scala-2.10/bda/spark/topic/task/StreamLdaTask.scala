@@ -3,7 +3,6 @@ package bda.spark.topic.task
 import bda.spark.topic.core.PsStreamLdaModel
 import bda.spark.topic.stream.{StreamLda, StreamLdaLearner}
 import bda.spark.topic.stream.io.{FileReader, StreamReader}
-import bda.spark.topic.stream.preprocess.Formatter
 import com.github.javacliparser._
 import org.apache.spark.SparkConf
 import org.apache.spark.streaming.{Seconds, StreamingContext}
@@ -41,7 +40,7 @@ class StreamLdaTask extends Task{
     val alpha = alphaOpt.getValue
     val beta = betaOpt.getValue
 
-    val ldaModel = new PsStreamLdaModel(K, V, alpha, beta, host, port)
+    val ldaModel = new PsStreamLdaModel(K, V, alpha, beta, host, port, timeOutOpt.getValue)
     val learner = new StreamLdaLearner(iterOpt.getValue, rateOpt.getValue, ldaModel)
 
     val streamReader = streamReaderOpt.getValue[StreamReader]
@@ -51,8 +50,8 @@ class StreamLdaTask extends Task{
     val conf = new SparkConf().setAppName("StreamLda")
     //   conf.setMaster("local[5]")
     conf.set("spark.network.timeout", s"${timeOutOpt.getValue}s")
-
-    val ssc = new StreamingContext(conf, Seconds(20))
+    conf.set("spark.executor.heartbeatInterval", s"${timeOutOpt.getValue}s")
+    val ssc = new StreamingContext(conf, Seconds(60))
 
     val stream = streamReader.getInstances(ssc)
 
@@ -69,7 +68,6 @@ class StreamLdaTask extends Task{
     ssc.start()
     ssc.awaitTermination()
     ldaModel.destroy()
-
   }
 }
 

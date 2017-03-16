@@ -47,7 +47,7 @@ class FileReader extends StreamReader {
     "Chunk Size", 10000, 1, Integer.MAX_VALUE)
 
   val slideDurationOption: IntOption = new IntOption("slideDuration", 'd',
-    "Slide Duration in milliseconds", 20000, 1, Integer.MAX_VALUE)
+    "Slide Duration in milliseconds", 60000, 1, Integer.MAX_VALUE)
 
   val fileNameOption: StringOption = new StringOption("fileName", 'f',
     "File Name", "data/economy_sent_docs_2016_mini")

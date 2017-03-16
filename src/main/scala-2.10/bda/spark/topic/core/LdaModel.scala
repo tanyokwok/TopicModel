@@ -20,7 +20,7 @@ package bda.spark.topic.core
 import java.util
 
 import bda.spark.topic.glint.Glint
-import bda.spark.topic.redis.{RedisLock, RedisVocabClient}
+import bda.spark.topic.redis.{RedisLock, RedisVocabClient, RedisVocabPipeline}
 import breeze.linalg.{DenseMatrix, DenseVector}
 import com.typesafe.config.ConfigFactory
 
@@ -173,28 +173,29 @@ class PsStreamLdaModel(val K: Int,
                        val alpha: Double,
                        val beta: Double,
                        val host: String,
-                       val port: Int
+                       val port: Int,
+                       val expired: Long
                       ) extends Serializable{
 
 
   private val lockKey = "lda.ps.lock"
   private val jedisClusterNodes = HashSet[HostAndPort](new HostAndPort(host, port))
 
-
   @transient
   lazy val jedis = {
     new JedisCluster(jedisClusterNodes)
   }
 
+  jedis.del(lockKey)
   @transient
   lazy val lock = {
     val jedis: JedisCluster = new JedisCluster(jedisClusterNodes)
-    val ret = new RedisLock(jedis, lockKey)
+    val ret = new RedisLock(jedis, lockKey, expired)
     ret
   }
 
   @transient
-  lazy val redisVocab = RedisVocabClient(V, jedis)
+  lazy val redisVocab = new RedisVocabPipeline(V, jedis, expired)
 
   redisVocab.clear()
 

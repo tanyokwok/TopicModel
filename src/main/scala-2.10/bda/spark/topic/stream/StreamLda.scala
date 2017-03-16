@@ -46,6 +46,7 @@ class StreamLda(val lda: StreamLdaLearner) extends Serializable{
   }
 
   def train(data: DStream[Instance]): DStream[Instance] = {
+
     data.transform{
       (rdd, time) =>
         val ret: RDD[Instance] = train(rdd, time.milliseconds)

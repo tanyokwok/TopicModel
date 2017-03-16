@@ -12,7 +12,7 @@ class RedisVocabClientSuite extends FunSuite{
 
   test("RedisVocabClient") {
 
-    val jedisNodes = HashSet[HostAndPort](new HostAndPort("localhost", 30001))
+    val jedisNodes = HashSet[HostAndPort](new HostAndPort("bda07", 30001))
     val jedis = new JedisCluster(jedisNodes)
     val client = RedisVocabClient( 2L, jedis)
     client.clear()

@@ -21,7 +21,7 @@ class StreamLdaLearner(val iteration: Int,
   val V = model.V
   val K = model.K
 
-  def update(batch: Seq[IdDocInstance], token: String): Seq[IdDocInstance]= {
+  def update(batch: Seq[IdDocInstance], token: String, batchTime: Long): Seq[IdDocInstance]= {
 
     val timer = new Timer()
     val wordCount = batch.flatMap(_.tokens.toSeq).size
@@ -35,8 +35,7 @@ class StreamLdaLearner(val iteration: Int,
     val batchNt = batchNdt.reduce(_ + _)
 
     val wordIds = docs.flatMap(_.map(_._1)).distinct.toArray
-    val priorNwt = Glint.pullData(wordIds, model.priorWordTopicCountMat)
-    val priorNt = Glint.pullData((0L until K.toLong).toArray, model.priorTopicCountVec)
+    val (priorNt, priorNwt) = syncParameter(wordIds, batchTime)
 
     for (i <- 0 until batchNt.length) {
       batchNdt(i) += priorNt(i)
@@ -73,7 +72,7 @@ class StreamLdaLearner(val iteration: Int,
     }.toSeq
 
     println(s"$token: update model at ${timer.getReadableRunnningTime()}")
-    update(wordIds, wordTopicCounts, token)
+    update(wordIds, wordTopicCounts, time)
     println(
       s"/////////////////////////////////////////////////\n" +
       s"Log(likelihood): ${logLikelihood(priorNwt, priorNt, wordTopicCounts)}\n" +
@@ -82,6 +81,39 @@ class StreamLdaLearner(val iteration: Int,
 
     println(s"$token: update success at ${timer.getReadableRunnningTime()}")
     docs.map(new IdDocInstance(_))
+  }
+
+  private def syncParameter(wordIds: Array[Long], batchTime: Long):
+  (Array[Double], Map[Long, Array[Double]]) = {
+    val (lastBatchTime , lastUpdateTimes) = model.redisVocab.getLastUpdateBatchTime(wordIds)
+    val priorNwt = Glint.pullData(wordIds, model.priorWordTopicCountMat)
+    val priorNt = Glint.pullData((0L until K.toLong).toArray, model.priorTopicCountVec)
+
+    val duration = 60000
+    if (lastBatchTime != -1 && lastBatchTime < batchTime) {
+      val batchDelta = (batchTime - lastBatchTime) / duration
+      val yeta = math.pow(rate , batchDelta)
+      // nt = math.pow(rate, batchDelta) * nt
+      val deltaNt = priorNt.map(- _ * (1 - yeta))
+      Range(0, priorNt.length).foreach(k=> priorNt(k) *= yeta)
+      Glint.pushData(deltaNt, model.priorTopicCountVec)
+    }
+
+    val deltaNwt = priorNwt.zip(lastUpdateTimes).filter{
+      case ((wid, vec), lastTime) =>
+        lastTime > 0 && lastTime < batchTime
+    }.map{
+      case ((wid, vec), lastTime) =>
+
+        val batchDelta = (batchTime - lastBatchTime) / duration
+        val yeta = math.pow(rate , batchDelta)
+        val ret = vec.zipWithIndex.map(x => (wid, x._2, - x._1 * (1-yeta)) )
+        Range(0, vec.length).foreach(k=> vec(k) *= yeta)
+        ret
+    }.flatMap(_.toSeq)
+    Glint.pushData(deltaNwt, model.priorWordTopicCountMat)
+    
+    (priorNt, priorNwt)
   }
 
   def logLikelihood(priorNwt: Map[Long, Array[Double]],
@@ -118,20 +150,39 @@ class StreamLdaLearner(val iteration: Int,
   }
 
   private def update(wordIds: Array[Long],
-                          wordTopicCounts: Seq[(Long, Int, Double)],
-                          token: String): Unit = {
+                     wordTopicCounts: Seq[(Long, Int, Double)],
+                     time: Long,
+                     token: String): Unit = {
 
     model.lock.fetchLock(token)
-
+    val lastUpdateTime = model.redisVocab.getLastUpdateBatchTime(wordIds)
     val priorNwt = Glint.pullData(wordIds, model.priorWordTopicCountMat)
     val priorNt = Glint.pullData((0L until K.toLong).toArray, model.priorTopicCountVec)
 
+
+    val negNwt = priorNwt.flatMap{
+      entry =>
+        val wid = entry._1
+        val vec = entry._2
+        vec.zipWithIndex.filter(_._1 < 0 ).map{
+          case (v, id) =>
+            (wid, id, -v + model.alpha)
+        }
+    }.toSeq
+
+    negNwt.foreach{
+      case (wid, id, delta) =>
+        println(s"Correct (${wid}, $id, $delta)")
+        priorNwt(wid)(id) += delta
+        priorNt(id) += delta
+    }
 
     val wordTopicDelta = priorNwt.map(e => (e._1, e._2.map(-_*rate)))
     wordTopicCounts.foreach{
       case (wid, topic, cnt) =>
         wordTopicDelta(wid)(topic) += cnt * rate
     }
+
     Glint.pushData(wordTopicDelta, model.priorWordTopicCountMat)
 
     val topicDelta = priorNt.map(- _ * rate)

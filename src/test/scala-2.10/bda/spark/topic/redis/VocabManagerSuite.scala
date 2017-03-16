@@ -15,7 +15,7 @@ import scala.util.Random
   */
 object VocabManagerSuite {
   val vocabSize =40L
-  val ldaModel = new PsStreamLdaModel(10 , vocabSize, 1, 1, "localhost", 30001)
+  val ldaModel = new PsStreamLdaModel(10 , vocabSize, 1, 1, "localhost", 30001, 60000)
   def example(time: Long, id : Int): Unit = {
 
     //println(s"Running at time : $time ")

@@ -1,10 +1,9 @@
 package bda.spark.topic.redis
 
 
-import java.lang.Long
 import java.util
 
-import redis.clients.jedis.{HostAndPort, JedisCluster, Tuple}
+import redis.clients.jedis._
 
 import collection.JavaConversions._
 import scala.collection.immutable.HashSet
@@ -13,24 +12,29 @@ import scala.collection.immutable.HashSet
   * Created by Roger on 17/3/5.
   */
 class RedisVocabClient(val maxVocabSize: Long,
-                       val jedis: JedisCluster)
+                       val jedisCluster: JedisCluster,
+                       val expired: Long)
                         extends Serializable{
 
   val vocabKey = "lda.vocab"
   val timeKey = "lda.vocab.age"
   val lockKey = "lda.vocab.lock"
   val countKey = "lda.vocab.count"
+  val batchWordKey = "lda.vocab.batch.word"
+  val batchKey = "lda.vocab.batch"
 
-  val lock = new RedisLock(jedis, lockKey)
+  val lock = new RedisLock(jedisCluster, lockKey, expired)
 
   def clear() {
-    jedis.del(vocabKey)
-    jedis.del(timeKey)
-    jedis.del(countKey)
-    jedis.del(lockKey)
+    jedisCluster.del(vocabKey)
+    jedisCluster.del(timeKey)
+    jedisCluster.del(countKey)
+    jedisCluster.del(lockKey)
+    jedisCluster.del(batchWordKey)
+    jedisCluster.del(batchKey)
   }
 
-  def loadVocab = jedis.hgetAll(vocabKey).map(x=>(x._2.toLong, x._1))
+  def loadVocab = jedisCluster.hgetAll(vocabKey).map(x=>(x._2.toLong, x._1))
 
   /**
     * 如果找到则返回ID, 并打上最新时间戳
@@ -39,14 +43,14 @@ class RedisVocabClient(val maxVocabSize: Long,
     * @return
     */
   def getTerm(term: String, time: Long): Long ={
-    val value = jedis.hget(vocabKey, term)
+    val value = jedisCluster.hget(vocabKey, term)
 
     val termId: Long = if (value == null) {
       -1L
     } else {
-      val lastTime = jedis.zscore(timeKey, term)
+      val lastTime = jedisCluster.zscore(timeKey, term)
       if (lastTime.toLong < time) {
-        jedis.zadd(timeKey, time.toDouble, term)
+        jedisCluster.zadd(timeKey, time.toDouble, term)
       }
       value.toLong
     }
@@ -56,34 +60,18 @@ class RedisVocabClient(val maxVocabSize: Long,
 
   /**
     * 增加使用计数
-    * @param termId
+    * @param term
     */
-  def incUseCount(termId: Long): Unit = {
-    if (termId >= 0) {
-      jedis.hincrBy(countKey, termId.toString, 1)
-    }
+  def incUseCount(term: String): Unit = {
+      jedisCluster.hincrBy(countKey, term, 1)
   }
 
   /**
     * 减少使用计数
-    * @param termId
+    * @param term
     */
-  def decUseCount(termId: Long): Unit ={
-    if (termId >= 0) {
-      jedis.hincrBy(countKey, termId.toString, -1)
-    }
-  }
-
-  def getUseCount(termId: Long): Long = {
-    if (termId < 0) {
-      return 0L
-    }
-    val ret = jedis.hget(countKey, termId.toString)
-    if (ret == null ) {
-      0L
-    } else {
-      ret.toLong
-    }
+  def decUseCount(term: String): Unit ={
+      jedisCluster.hincrBy(countKey, term, -1)
   }
 
   def fetchLock(token: String): Unit = {
@@ -99,14 +87,14 @@ class RedisVocabClient(val maxVocabSize: Long,
     val ret = addOrReplace(term, time)
 
     if (ret >= 0) {
-      jedis.zadd(timeKey, time.toDouble, term)
-      jedis.hset(countKey, ret.toString, "0")
+      jedisCluster.zadd(timeKey, time.toDouble, term)
+      jedisCluster.hset(countKey, term, "0")
     }
 
     ret
   }
 
-  def vocabSize = jedis.hlen(vocabKey)
+  def vocabSize = jedisCluster.hlen(vocabKey)
 
   /**
     * 尝试将词汇添加到词表中,如果词表已经满了的话则激活替换策略, 替换失败返回-1
@@ -117,9 +105,9 @@ class RedisVocabClient(val maxVocabSize: Long,
   private def addOrReplace(term: String, time: Long): Long ={
     val curVocabSize = vocabSize
     if (curVocabSize < maxVocabSize) {
-      val ret: Long = jedis.hsetnx(vocabKey, term, curVocabSize.toString)
+      val ret: Long = jedisCluster.hsetnx(vocabKey, term, curVocabSize.toString)
       if (ret == 0) {
-        jedis.hget(vocabKey, term).toLong
+        jedisCluster.hget(vocabKey, term).toLong
       } else {
         curVocabSize
       }
@@ -135,25 +123,25 @@ class RedisVocabClient(val maxVocabSize: Long,
       val leastUserTime = result.getScore
       //println(s"[INFO] $leastUsedTerm is age $age")
 
-      val leastUsedTermId = jedis.hget(vocabKey, leastUsedTerm)
+      val leastUsedTermId = jedisCluster.hget(vocabKey, leastUsedTerm)
 
       //2. 将term, termId从Vocab中删除
-      if (jedis.hdel(vocabKey, leastUsedTerm) == 0) {
+      if (jedisCluster.hdel(vocabKey, leastUsedTerm) == 0) {
         println(s"[ERROR] jedis.hdel(vocabKey,${leastUsedTerm}) failed!")
         System.exit(-1)
       }
 
-      if (jedis.zrem(timeKey, leastUsedTerm) == 0) {
+      if (jedisCluster.zrem(timeKey, leastUsedTerm) == 0) {
         println(s"[ERROR] jedis.zrem(timeKey,${leastUsedTerm}) failed!")
         System.exit(-1)
       }
 
-      if (jedis.hdel(countKey, leastUsedTermId) == 0) {
+      if (jedisCluster.hdel(countKey, leastUsedTerm) == 0) {
         println(s"[ERROR] jedis.hdel(countKey,${leastUsedTerm}) failed!")
         System.exit(-1)
       }
 
-      jedis.hset(vocabKey, term, leastUsedTermId)
+      jedisCluster.hset(vocabKey, term, leastUsedTermId)
       leastUsedTermId.toLong
     }
   }
@@ -169,17 +157,16 @@ class RedisVocabClient(val maxVocabSize: Long,
     var index = 0
     val batch = 10
     while (true) {
-      val result: util.Set[Tuple] = jedis.zrangeWithScores(timeKey, index * batch, (index + 1) * batch )
+      val result: util.Set[Tuple] = jedisCluster.zrangeWithScores(timeKey, index * batch, (index + 1) * batch )
       for (entry <- result) {
         val leastUsedTerm = entry.getElement
         val leastUsedTime= entry.getScore
-        val leastUsedTermId = jedis.hget(vocabKey, leastUsedTerm)
 
         if (leastUsedTime.toLong >= time) {
           return null
         }
 
-        val count = jedis.hget(countKey, leastUsedTermId)
+        val count = jedisCluster.hget(countKey, leastUsedTerm)
 
         assert( count == null || count.toLong >= 0)
 
@@ -197,7 +184,7 @@ class RedisVocabClient(val maxVocabSize: Long,
   }
 
   private def close(): Unit = {
-    jedis.close()
+    jedisCluster.close()
   }
 
 }
@@ -207,7 +194,7 @@ object RedisVocabClient {
 
   def apply(maxSize: Long = 1000000L,
             jedis: JedisCluster):RedisVocabClient = {
-    val client = new RedisVocabClient(maxSize, jedis)
+    val client = new RedisVocabClient(maxSize, jedis, 60000)
     client
   }
 

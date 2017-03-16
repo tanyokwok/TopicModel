@@ -2,7 +2,7 @@ package bda.spark.topic.stream.preprocess
 
 import bda.spark.topic.core.{IdDocInstance, Instance, PsStreamLdaModel, TextDocInstance}
 import bda.spark.topic.glint.Glint
-import bda.spark.topic.redis.RedisVocabClient
+import bda.spark.topic.redis.{RedisVocabClient, RedisVocabPipeline}
 import bda.spark.topic.utils.Timer
 
 import scala.collection.mutable
@@ -15,7 +15,7 @@ class VocabManager(val ldaModel: PsStreamLdaModel,
                   val token: String) {
 
   val word2id = new mutable.HashMap[String, Long]()
-  val redisVocab: RedisVocabClient = ldaModel.redisVocab
+  val redisVocab: RedisVocabPipeline = ldaModel.redisVocab
 
   def transfrom(input: Iterator[Instance], time: Long): Seq[IdDocInstance] = {
 
@@ -60,7 +60,9 @@ class VocabManager(val ldaModel: PsStreamLdaModel,
 
     word2id.foreach{
       case (word, wid) =>
-      redisVocab.decUseCount(wid)
+        if (wid >= 0) {
+          redisVocab.decUseCount(word)
+        }
     }
 
     //println( s"after dec: ${word2id.map( x =>(x._1, redisVocab.getUseCount(x._2))).mkString(" ")}" )
@@ -83,18 +85,16 @@ class VocabManager(val ldaModel: PsStreamLdaModel,
         val word: String = entry._1
         val freq = entry._2.size
         (word, freq)
-    }
+    }.toArray
+
+    val vocab = vocab_freq.map(_._1)
 
     println(s"[Build Vocab] try to fetch lock at ${timer.getReadableRunnningTime()}")
     //获取词表锁,开始操作词表
     redisVocab.fetchLock(token)
-    val word_freq2id = new ArrayBuffer[((String, Int), Long)]() // thread safe
-    vocab_freq.foreach {
-      case (word, freq) =>
-        val wid = redisVocab.getTerm(word, time)
-        word_freq2id += (((word, freq), wid))
-    }
+    val word_freq2id = vocab_freq.zip(redisVocab.getTermIds(vocab, time))
 
+    println(s"[Build Vocab] try to fetch lock at ${timer.getReadableRunnningTime()}")
     val unkWord = word_freq2id.filter( _._2 < 0 )
     //println(s"unkWords: ${unkWord.map(x=>(x._1._1, x._2)).sorted.mkString(" ")}")
 
@@ -102,37 +102,36 @@ class VocabManager(val ldaModel: PsStreamLdaModel,
     //println(s"knwWords: ${knwWord.map(x=>(x._1._1, x._2)).sorted.mkString(" ")}")
 
     //添加词汇使用计数
-    knwWord.foreach{
-      case ((word, freq), wid) =>
-        redisVocab.incUseCount(wid)
-    }
+    redisVocab.incUseCount(knwWord.map(_._1._1))
 
-    word2id ++= knwWord.map(entry => (entry._1._1, entry._2)).toMap
+    word2id ++= knwWord.map(x => (x._1._1, x._2)).toMap
     println(s"[Build Vocab] try to push data at ${timer.getReadableRunnningTime()}")
+
     //获取新词ID,并且添加词汇计数
     if (unkWord.size > 0) {
       var flag = true
-      word2id ++= unkWord.map(_._1).sortBy(-_._2).map{
-        case (word, freq) =>
-          if (flag) {
-            val wid: Long = redisVocab.addTerm(word, time)
-            // 如果返回值小于0, 说明表已经满了
-            if (wid < 0) {
-              //置flag为false, 使得剩下的所有词汇的id为-1
-              flag = false
-            } else {
-              //先删除原有的数据, 新增的单词需要加上先验alpha
-              val vec = Glint.pullData(wid, ldaModel.priorWordTopicCountMat)
-              val minusVec = vec.map(ldaModel.beta - _)
-              Glint.pushData(wid, minusVec, ldaModel.priorWordTopicCountMat)
-              Glint.pushData(minusVec, ldaModel.priorTopicCountVec)
-              redisVocab.incUseCount(wid)
-            }
-            (word, wid)
-          } else {
-            (word, -1L)
+      val unkWordSortedByFreq = unkWord.sortBy(- _._1._2).map(_._1._1)
+      val unkWord2Id = unkWordSortedByFreq.zip(
+        redisVocab.addTerms(unkWord.map(_._1._1), time))
+
+      word2id ++= unkWord2Id
+
+      val luckyWord2id = unkWord2Id.filter(_._2 >= 0 )
+      val matrix = Glint.pullData(luckyWord2id.map(_._2), ldaModel.priorWordTopicCountMat)
+      val minusMatrix = matrix.map(x => (x._1, x._2.map(ldaModel.beta - _)))
+      Glint.pushData(minusMatrix, ldaModel.priorWordTopicCountMat)
+
+      val minusVec = Array.fill[Double](ldaModel.K)(0)
+      matrix.foreach{
+        case (wid, vec) =>
+          Range(0, vec.length).foreach{
+            k =>
+              minusVec(k) += vec(k)
           }
-      }.toMap
+      }
+      Glint.pushData(minusVec, ldaModel.priorTopicCountVec)
+
+      redisVocab.incUseCount(luckyWord2id.map(_._1))
     }
 
     println(s"[Build Vocab] try to release lock at ${timer.getReadableRunnningTime()}")
