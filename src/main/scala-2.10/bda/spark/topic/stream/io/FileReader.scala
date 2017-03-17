@@ -46,9 +46,6 @@ class FileReader extends StreamReader {
   val chunkSizeOption: IntOption = new IntOption("chunkSize", 'k',
     "Chunk Size", 10000, 1, Integer.MAX_VALUE)
 
-  val slideDurationOption: IntOption = new IntOption("slideDuration", 'd',
-    "Slide Duration in milliseconds", 60000, 1, Integer.MAX_VALUE)
-
   val fileNameOption: StringOption = new StringOption("fileName", 'f',
     "File Name", "data/economy_sent_docs_2016_mini")
 
@@ -57,7 +54,6 @@ class FileReader extends StreamReader {
     classOf[Formatter], "Formatter")
 
   val chunkSize = chunkSizeOption.getValue
-  val slideDuration = slideDurationOption.getValue
   val fileName = fileNameOption.getValue
   val formatter = formatterOption.getValue[Formatter]
 
@@ -79,13 +75,16 @@ class FileReader extends StreamReader {
     formatter.format(lines.next())
   }
 
+  def getInstances(): Seq[Instance]={
+    Array.fill[Instance](chunkSize)(getInstanceFromFile())
+  }
   /**
    * Obtains a stream of examples.
    *
    * @param ssc a Spark Streaming context
    * @return a stream of Examples
    */
-  override def getInstances(ssc: StreamingContext): DStream[Instance] = {
+  override def getInstances(ssc: StreamingContext, duration: Long): DStream[Instance] = {
     new InputDStream[Instance](ssc) {
       override def start(): Unit = {}
 
@@ -97,7 +96,7 @@ class FileReader extends StreamReader {
       }
 
       override def slideDuration = {
-        new Duration(FileReader.this.slideDuration)
+        new Duration(duration)
       }
     }
   }

@@ -2,7 +2,7 @@ package bda.spark.topic.stream.preprocess
 
 import bda.spark.topic.core.{IdDocInstance, Instance, PsStreamLdaModel, TextDocInstance}
 import bda.spark.topic.glint.Glint
-import bda.spark.topic.redis.{RedisVocabClient, RedisVocabPipeline}
+import bda.spark.topic.redis.{RedisVocab, RedisVocabClient, RedisVocabPipeline}
 import bda.spark.topic.utils.Timer
 
 import scala.collection.mutable
@@ -15,7 +15,7 @@ class VocabManager(val ldaModel: PsStreamLdaModel,
                   val token: String) {
 
   val word2id = new mutable.HashMap[String, Long]()
-  val redisVocab: RedisVocabPipeline = ldaModel.redisVocab
+  val redisVocab: RedisVocab = ldaModel.redisVocab
 
   def transfrom(input: Iterator[Instance], time: Long): Seq[IdDocInstance] = {
 
@@ -57,13 +57,7 @@ class VocabManager(val ldaModel: PsStreamLdaModel,
     redisVocab.fetchLock(token)
 
     //println( s"before dec: ${word2id.map( x =>(x._1, redisVocab.getUseCount(x._2))).mkString(" ")}" )
-
-    word2id.foreach{
-      case (word, wid) =>
-        if (wid >= 0) {
-          redisVocab.decUseCount(word)
-        }
-    }
+    redisVocab.decUseCount(word2id.map(_._1).toArray)
 
     //println( s"after dec: ${word2id.map( x =>(x._1, redisVocab.getUseCount(x._2))).mkString(" ")}" )
     redisVocab.relaseLock(token)
@@ -93,6 +87,7 @@ class VocabManager(val ldaModel: PsStreamLdaModel,
     //获取词表锁,开始操作词表
     redisVocab.fetchLock(token)
     val word_freq2id = vocab_freq.zip(redisVocab.getTermIds(vocab, time))
+    println(word_freq2id.size)
 
     println(s"[Build Vocab] try to fetch lock at ${timer.getReadableRunnningTime()}")
     val unkWord = word_freq2id.filter( _._2 < 0 )
@@ -107,30 +102,36 @@ class VocabManager(val ldaModel: PsStreamLdaModel,
     word2id ++= knwWord.map(x => (x._1._1, x._2)).toMap
     println(s"[Build Vocab] try to push data at ${timer.getReadableRunnningTime()}")
 
+
     //获取新词ID,并且添加词汇计数
     if (unkWord.size > 0) {
-      var flag = true
       val unkWordSortedByFreq = unkWord.sortBy(- _._1._2).map(_._1._1)
       val unkWord2Id = unkWordSortedByFreq.zip(
-        redisVocab.addTerms(unkWord.map(_._1._1), time))
+        redisVocab.addTerms(unkWordSortedByFreq, time)).toMap
 
       word2id ++= unkWord2Id
 
-      val luckyWord2id = unkWord2Id.filter(_._2 >= 0 )
+      val luckyWord2id = unkWord2Id.filter(_._2 >= 0 ).toArray
+
+      ldaModel.lock.fetchLock(token)
       val matrix = Glint.pullData(luckyWord2id.map(_._2), ldaModel.priorWordTopicCountMat)
       val minusMatrix = matrix.map(x => (x._1, x._2.map(ldaModel.beta - _)))
       Glint.pushData(minusMatrix, ldaModel.priorWordTopicCountMat)
 
       val minusVec = Array.fill[Double](ldaModel.K)(0)
-      matrix.foreach{
+      minusMatrix.foreach{
         case (wid, vec) =>
           Range(0, vec.length).foreach{
             k =>
               minusVec(k) += vec(k)
           }
       }
-      Glint.pushData(minusVec, ldaModel.priorTopicCountVec)
 
+      println("add word: " + minusVec.mkString(" "))
+      Glint.pushData(minusVec, ldaModel.priorTopicCountVec)
+      val temp = Glint.pullData((0L until ldaModel.K.toLong).toArray, ldaModel.priorTopicCountVec)
+      println("temp : " + temp.mkString(" "))
+      ldaModel.lock.releaseLock(token)
       redisVocab.incUseCount(luckyWord2id.map(_._1))
     }
 

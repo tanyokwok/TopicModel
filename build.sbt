@@ -32,11 +32,11 @@ libraryDependencies  ++= Seq(
   // Native libraries greatly improve performance, but increase jar sizes.
   // It also packages various blas implementations, which have licenses that may or may not
   // be compatible with the Apache License. No GPL code, as best I know.
-  "org.scalanlp" %% "breeze-natives" % "0.12",
+//  "org.scalanlp" %% "breeze-natives" % "0.12",
 
   // The visualization library is distributed separately as well.
   // It depends on LGPL code.
-  "org.scalanlp" %% "breeze-viz" % "0.12"
+ // "org.scalanlp" %% "breeze-viz" % "0.12"
 )
 
 resolvers += "Sonatype Snapshots" at "https://oss.sonatype.org/content/repositories/snapshots/"

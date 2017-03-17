@@ -33,6 +33,6 @@ abstract class StreamReader extends Configurable{
    * @param ssc a Spark Streaming context
    * @return a stream of Examples
    */
-  def getInstances(ssc:StreamingContext): DStream[Instance]
+  def getInstances(ssc:StreamingContext, duration: Long): DStream[Instance]
 
 }

@@ -32,7 +32,8 @@ class StreamLda(val lda: StreamLdaLearner) extends Serializable{
         println(s"[StreamLda-$id] begin update at time ${timer.getReadableRunnningTime()}")
        // println(s"$id: update lda model")
         //asynchronized update lda model
-        val assign = lda.update(batch, id)
+
+        val assign = lda.update(batch, id, time, vocabManager.word2id)
        // println(s"$id: decode topic assign")
         println(s"[StreamLda-$id] begin decode at time ${timer.getReadableRunnningTime()}")
         val ret = vocabManager.decode(assign)

@@ -20,7 +20,7 @@ package bda.spark.topic.core
 import java.util
 
 import bda.spark.topic.glint.Glint
-import bda.spark.topic.redis.{RedisLock, RedisVocabClient, RedisVocabPipeline}
+import bda.spark.topic.redis.{RedisLock, RedisVocab, RedisVocabClient, RedisVocabPipeline}
 import breeze.linalg.{DenseMatrix, DenseVector}
 import com.typesafe.config.ConfigFactory
 
@@ -28,7 +28,7 @@ import scala.concurrent.ExecutionContext.Implicits.global
 import scala.collection.mutable
 import glint._
 import glint.models.client.{BigMatrix, BigVector}
-import redis.clients.jedis.{HostAndPort, JedisCluster}
+import redis.clients.jedis.{HostAndPort, Jedis, JedisCluster}
 
 import collection.JavaConversions._
 import scala.collection.immutable.HashSet
@@ -172,9 +172,11 @@ class PsStreamLdaModel(val K: Int,
                        val V: Long,
                        val alpha: Double,
                        val beta: Double,
+                       val rate: Double,
                        val host: String,
                        val port: Int,
-                       val expired: Long
+                       val expired: Long,
+                      val duration: Long
                       ) extends Serializable{
 
 
@@ -183,19 +185,20 @@ class PsStreamLdaModel(val K: Int,
 
   @transient
   lazy val jedis = {
-    new JedisCluster(jedisClusterNodes)
+    new Jedis(host, port)
+    //new JedisCluster(jedisClusterNodes)
   }
 
   jedis.del(lockKey)
   @transient
   lazy val lock = {
-    val jedis: JedisCluster = new JedisCluster(jedisClusterNodes)
+    //val jedis: JedisCluster = new JedisCluster(jedisClusterNodes)
     val ret = new RedisLock(jedis, lockKey, expired)
     ret
   }
 
   @transient
-  lazy val redisVocab = new RedisVocabPipeline(V, jedis, expired)
+  lazy val redisVocab = new RedisVocab(V, jedis, expired)
 
   redisVocab.clear()
 
@@ -222,7 +225,19 @@ class PsStreamLdaModel(val K: Int,
     redisVocab.fetchLock(lockToken)
     val id2word = redisVocab.loadVocab
 
-    val matrix = Glint.pullData(id2word.map(_._1).toArray, priorWordTopicCountMat)
+    val ids = id2word.map(_._1).toArray
+    val matrix = Glint.pullData(ids, priorWordTopicCountMat)
+    val (batchTime, lastUpdateTime) = redisVocab.getLastUpdateBatchTime(ids)
+
+    ids.zip(lastUpdateTime).foreach{
+      case (id, lastTime) =>
+        if (lastTime < batchTime) {
+          val batchDelta = (batchTime - lastTime) / 60000
+          for (i <- 0 until K) {
+            matrix(id)(i) = matrix(id)(i)*math.pow(rate, batchDelta)
+          }
+        }
+    }
 
     matrix.foreach{
       case (wid, vec) =>

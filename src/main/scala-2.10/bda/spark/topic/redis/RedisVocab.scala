@@ -6,16 +6,16 @@ import java.util.Map.Entry
 import redis.clients.jedis._
 import redis.clients.jedis.exceptions.JedisClusterException
 import redis.clients.util.JedisClusterCRC16
-import spire.std.byte
 
-import collection.JavaConversions._
+import scala.collection.JavaConversions._
 import scala.collection.mutable.ArrayBuffer
+
 /**
   * Created by Roger on 17/3/14.
   */
-class RedisVocabPipeline(val maxVocabSize: Long,
-                         val jedisCluster: JedisCluster,
-                         expired: Long)
+class RedisVocab(val maxVocabSize: Long,
+                 val jedis: Jedis,
+                 expired: Long)
   extends Serializable{
 
   val vocabKey = "lda.vocab"
@@ -25,49 +25,29 @@ class RedisVocabPipeline(val maxVocabSize: Long,
   val batchWordKey = "lda.vocab.batch.word"
   val batchKey = "lda.vocab.batch"
 
-  val lock = new RedisLock(jedisCluster, lockKey, expired)
-
-  private var nodeMap: util.Map[String, JedisPool] = null
-  private var slotHostMap: util.TreeMap[Long, String] = initJedisNodeMap()
-  val vocabPipeline = getJedis(vocabKey).pipelined()
-  val countPipeline = getJedis(countKey).pipelined()
-  val timePipeline = getJedis(timeKey).pipelined()
-  val batchPipeline = getJedis(batchWordKey).pipelined()
-
-  def initJedisNodeMap(): util.TreeMap[Long, String] = {
-    try {
-      nodeMap = jedisCluster.getClusterNodes()
-      println(nodeMap.keySet())
-      val anyHost = nodeMap.keySet().iterator().next()
-      slotHostMap = getSlotHostMap(anyHost);
-    } catch {
-      case e: JedisClusterException =>
-        println(e.getMessage());
-    }
-
-    slotHostMap
-  }
+  val lock = new RedisLock(jedis, lockKey, expired)
+  val pipeline = jedis.pipelined()
 
   def clear() {
-    jedisCluster.del(vocabKey)
-    jedisCluster.del(timeKey)
-    jedisCluster.del(countKey)
-    jedisCluster.del(lockKey)
-    jedisCluster.del(batchWordKey)
-    jedisCluster.del(batchKey)
+    jedis.del(vocabKey)
+    jedis.del(timeKey)
+    jedis.del(countKey)
+    jedis.del(lockKey)
+    jedis.del(batchWordKey)
+    jedis.del(batchKey)
     println(vocabSize)
     assert(vocabSize == 0)
   }
 
   def loadVocab ={
-    val vocab = vocabPipeline.hgetAll(vocabKey)
-    vocabPipeline.sync()
+    val vocab = pipeline.hgetAll(vocabKey)
+    pipeline.sync()
     vocab.get().map(x=>(x._2.toLong, x._1))
   }
 
   def vocabSize = {
-    val x = vocabPipeline.hlen(vocabKey)
-    vocabPipeline.sync()
+    val x = pipeline.hlen(vocabKey)
+    pipeline.sync()
     x.get()
   }
 
@@ -75,33 +55,31 @@ class RedisVocabPipeline(val maxVocabSize: Long,
   def updateBatchTime(ids: Array[Long], time: Long): Unit = {
     ids.map{
       id =>
-        batchPipeline.hset(batchWordKey, id.toString, time.toString)
+        pipeline.hset(batchWordKey, id.toString, time.toString)
     }
-    batchPipeline.sync()
-    batchPipeline.flushAll()
-    jedisCluster.set(batchKey, time.toString)
+    pipeline.set(batchKey, time.toString)
+    pipeline.sync()
   }
 
   def getLastUpdateBatchTime(ids: Array[Long]): (Long, Seq[Long]) = {
     val reps = ids.map{
       id =>
-        batchPipeline.hget(batchWordKey, id.toString)
+        pipeline.hget(batchWordKey, id.toString)
     }
-    batchPipeline.sync()
+    val ret = pipeline.get(batchKey)
+    pipeline.sync()
 
-    val ret = jedisCluster.get(batchKey)
 
-    (if (ret == null) -1 else ret.toLong,
+    (if (ret.get() == null) -1 else ret.get().toLong,
       reps.map(_.get().toLong))
   }
 
   def getTermIds(terms: Array[String], time: Long): Seq[Long] = {
     val vocabResps = terms.map {
       term =>
-        vocabPipeline.hget(vocabKey, term)
+        pipeline.hget(vocabKey, term)
     }
-
-    vocabPipeline.sync()
+    pipeline.sync()
 
     val termIds = vocabResps.map {
       resp =>
@@ -116,18 +94,17 @@ class RedisVocabPipeline(val maxVocabSize: Long,
 
     val timeResps = termNeedUpdate.map {
       term =>
-        timePipeline.zscore(timeKey, term)
+        pipeline.zscore(timeKey, term)
     }
-    timePipeline.sync()
+    pipeline.sync()
 
     timeResps.zip(termNeedUpdate).foreach {
       case (resp, term) =>
         if (resp.get().toLong < time) {
-          timePipeline.zadd(timeKey, time.toDouble, term)
+          pipeline.zadd(timeKey, time.toDouble, term)
         }
     }
-    timePipeline.sync()
-    timePipeline.flushAll()
+    pipeline.sync()
 
     termIds
   }
@@ -135,10 +112,9 @@ class RedisVocabPipeline(val maxVocabSize: Long,
   private def addUseCount(terms: Array[String], count: Int): Unit = {
     terms.foreach {
       term =>
-        countPipeline.hincrBy(countKey, term.toString, count)
+        pipeline.hincrBy(countKey, term.toString, count)
     }
-    countPipeline.sync()
-    countPipeline.flushAll()
+    pipeline.sync()
   }
 
   def incUseCount(terms: Array[String]): Unit = {
@@ -165,10 +141,10 @@ class RedisVocabPipeline(val maxVocabSize: Long,
   private def newTerms(termIds: Seq[(String, Long)], time: Long): Unit = {
     termIds.foreach {
       case (term, id) =>
-        vocabPipeline.hset(vocabKey, term, id.toString)
-        countPipeline.hset(countKey, term, "0")
-        timePipeline.zadd(timeKey, time.toDouble, term)
-        batchPipeline.hset(batchWordKey, id.toString, time.toString)
+        pipeline.hset(vocabKey, term, id.toString)
+        pipeline.hset(countKey, term, "0")
+        pipeline.zadd(timeKey, time.toDouble, term)
+        pipeline.hset(batchWordKey, id.toString, time.toString)
     }
   }
 
@@ -188,54 +164,37 @@ class RedisVocabPipeline(val maxVocabSize: Long,
 
     val termsNeedReplace = terms.slice(restSize.toInt, terms.length)
 
-    val matches: ArrayBuffer[String] = findMatch(termsNeedReplace.length, time,
-      timePipeline, countPipeline)
+    val matches: ArrayBuffer[String] = findMatch(termsNeedReplace.length, time)
     val termsLucky = termsNeedReplace.slice(0, matches.length)
     val less = termsNeedReplace.length - matches.length
 
     if (matches.length > 0) {
       val reps = matches.map {
         term =>
-          vocabPipeline.hget(vocabKey, term)
+          pipeline.hget(vocabKey, term)
       }
-      vocabPipeline.sync()
+      pipeline.sync()
 
       val ids = reps.map(_.get().toLong)
       val luckTermId = termsLucky.zip(ids)
       matches.zip(luckTermId).foreach {
         case (origin, (target, id)) =>
-          vocabPipeline.hdel(vocabKey, origin)
-          timePipeline.zrem(timeKey, origin)
-          countPipeline.hdel(countKey, origin)
+          pipeline.hdel(vocabKey, origin)
+          pipeline.zrem(timeKey, origin)
+          pipeline.hdel(countKey, origin)
       }
 
       newTerms(luckTermId, time)
-      vocabPipeline.sync()
-      timePipeline.sync()
-      countPipeline.sync()
-      batchPipeline.sync()
-      vocabPipeline.flushAll()
-      timePipeline.flushAll()
-      countPipeline.flushAll()
-      batchPipeline.flushAll()
+      pipeline.sync()
       ret = ret ++ ids
     } else {
-      vocabPipeline.sync()
-      timePipeline.sync()
-      countPipeline.sync()
-      batchPipeline.sync()
-      vocabPipeline.flushAll()
-      timePipeline.flushAll()
-      countPipeline.flushAll()
-      batchPipeline.flushAll()
+      pipeline.sync()
     }
 
     return ret ++ Array.fill[Long](less)(-1L)
   }
 
-  private def findMatch(needSize: Int, time: Long,
-                        timePipeline: Pipeline,
-                        countPipeline: Pipeline): ArrayBuffer[String] = {
+  private def findMatch(needSize: Int, time: Long): ArrayBuffer[String] = {
     val ret = new ArrayBuffer[String]()
     if (needSize == 0) {
       return ret
@@ -247,9 +206,9 @@ class RedisVocabPipeline(val maxVocabSize: Long,
     //val countPipeline = getJedis(countKey).pipelined()
     while (flag) {
       //获取[offset, reqSize)区间内的word
-      //val result = jedisCluster.zrangeWithScores(timeKey, offset, reqSize)
-      val rep = timePipeline.zrangeWithScores(timeKey, offset, offset + reqSize)
-      timePipeline.sync()
+      //val result = jedis.zrangeWithScores(timeKey, offset, reqSize)
+      val rep = pipeline.zrangeWithScores(timeKey, offset, offset + reqSize)
+      pipeline.sync()
       val result = rep.get()
       if (result.size() == 0) {
         flag = false
@@ -271,10 +230,9 @@ class RedisVocabPipeline(val maxVocabSize: Long,
         //过滤出没有被使用的词
         val reps = candidates.map {
           cand =>
-            countPipeline.hget(countKey, cand)
+            pipeline.hget(countKey, cand)
         }
-
-        countPipeline.sync()
+        pipeline.sync()
 
         ret ++= candidates.zip(reps).filter {
           case (term, rep) =>
@@ -297,30 +255,5 @@ class RedisVocabPipeline(val maxVocabSize: Long,
   }
 
 
-  private def getJedis(key: String): Jedis = {
-    val slot = JedisClusterCRC16.getSlot(key);
-    val entry: Entry[Long, String] = slotHostMap.lowerEntry(slot.toLong);
-    println(entry.getValue())
-    val pool = nodeMap.get(entry.getValue())
-    pool.getResource()
-  }
-
-  private def getSlotHostMap(anyHostAndPortStr: String): util.TreeMap[Long, String] = {
-    val tree = new util.TreeMap[Long, String]();
-    val parts = anyHostAndPortStr.split(":");
-    val anyHostAndPort = new HostAndPort(parts(0), parts(1).toInt);
-    try {
-      val jedis = new Jedis(anyHostAndPort.getHost(), anyHostAndPort.getPort())
-      val list: util.List[AnyRef] = jedis.clusterSlots()
-      for (obj <- list) {
-        val list1 = obj.asInstanceOf[util.List[AnyRef]]
-        val master = list1(2).asInstanceOf[util.List[AnyRef]]
-        val hostAndPort = s"${new String(master(0).asInstanceOf[Array[Byte]])}:${master(1)}";
-        tree.put(list1(0).asInstanceOf[Long], hostAndPort);
-        tree.put(list1(1).asInstanceOf[Long], hostAndPort);
-      }
-    }
-    return tree;
-  }
 
 }

@@ -25,6 +25,7 @@ object StreamJob {
 
     //run task
     val string = if (args.length > 0) args.mkString(" ")
+   // else "localStreamLdaTask"
                   else "StreamLdaTask"
 
     val task = ClassOption.cliStringToObject(string, classOf[Task], null)

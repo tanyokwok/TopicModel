@@ -8,5 +8,5 @@
 
 #########################################################################
 zip -d out/artifacts/lda_jar/lda.jar 'META-INF/*.SF' 'META-INF/*.RSA' 'META-INF/*SF'
-scp -r ./resources ./src ./out root@bda07:/home/gty/LDA
+scp -r ./resources ./src ./out root@bda04:/home/gty/LDA
 
