@@ -4,6 +4,7 @@ import bda.spark.topic.core.{CollapsedGibbsSampler, IdDoc, IdDocInstance, PsStre
 import bda.spark.topic.glint.Glint
 import bda.spark.topic.utils.Timer
 import breeze.linalg.DenseVector
+import org.apache.spark.Logging
 
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.collection.mutable
@@ -16,7 +17,7 @@ import scala.util.Random
   * Created by Roger on 17/3/10.
   */
 class StreamLdaLearner(val iteration: Int,
-                       val model: PsStreamLdaModel) extends Serializable{
+                       val model: PsStreamLdaModel) extends Serializable with Logging{
   val V = model.V
   val K = model.K
   val rate = model.rate
@@ -24,9 +25,9 @@ class StreamLdaLearner(val iteration: Int,
 
     val timer = new Timer()
     val wordCount = batch.flatMap(_.tokens.toSeq).size
-    println(s"$token: use time ${timer.getReadableRunnningTime()}")
-    println(s"$token: totally $wordCount tokens.")
-   // println("batch: " + batch.take(10).mkString(" "))
+    logInfo(s"$token: use time ${timer.getReadableRunnningTime()}")
+    logInfo(s"$token: totally $wordCount tokens.")
+   // logInfo("batch: " + batch.take(10).mkString(" "))
     //初始化batch的topic分配
     var docs = initTopicAssignment(batch)
     //统计词batch的n(doc,topic)和n(word,topic)计数
@@ -34,16 +35,20 @@ class StreamLdaLearner(val iteration: Int,
     val batchNt = batchNdt.reduce(_ + _)
 
     val wordIds = docs.flatMap(_.map(_._1)).distinct.toArray
-    val (priorNt, priorNwt) = syncParameter(wordIds, batchTime, token)
+    model.lock.fetchLock(token)
+    val (priorNt, priorNwt) = model.lazySyncParameter(wordIds, batchTime)
+    model.lock.releaseLock(token)
 
 
+    // n(d,t) + alpha
     batchNdt.foreach{
       vec =>
         for( i <- 0 until K) {
-          vec(i) += priorNt(i)
+          vec(i) += model.alpha
         }
     }
 
+    // n(w,t) + beta
     batchNwt.foreach{
       case (wid, vec) =>
         val pNwt = priorNwt(wid)
@@ -52,12 +57,20 @@ class StreamLdaLearner(val iteration: Int,
         }
     }
 
+    for (i <- 0 until K) {
+      batchNt(i) += priorNt(i)
+    }
 
-    println(s"$token: start gibbs sampling at ${timer.getReadableRunnningTime()}")
+    logInfo(s"$token: start gibbs sampling at ${timer.getReadableRunnningTime()}")
     val topicSamples = new ArrayBuffer[Seq[IdDoc]]()
+
+    println(s"origin: ${logLikelihood(priorNwt, priorNt, docs)}")
     //执行iteration次采样使得batch收敛
     for (iter <- 0 until iteration) {
+      // n(d,t) + alpha;  n(w,t) + beta(t,w), n(t) + beta(t)
       val newDocs: Seq[IdDoc] = doGibbsSampling(docs, batchNdt, batchNwt, batchNt)
+      println(batchNdt(0).toArray.mkString(" "))
+      println(s"Iter$iter: ${logLikelihood(priorNwt, priorNt, newDocs)}")
       topicSamples += newDocs
       docs = newDocs
     }
@@ -72,13 +85,6 @@ class StreamLdaLearner(val iteration: Int,
       entry =>
         val (term, topic) = entry._1
         val cnt = entry._2.size
-/*
-        if (!vocab.contains(term)) {
-          val word = id2word(term)
-          println(s"${word} ${word2id(word)} $term")
-        } else if (vocab(term) == "太行山") {
-          println(s"$term ${cnt.toDouble /5 }")
-        }*/
         (term, topic, cnt.toDouble / 5)
     }.toSeq
 
@@ -97,56 +103,19 @@ class StreamLdaLearner(val iteration: Int,
     }
 
 
-    println(s"$token: update model at ${timer.getReadableRunnningTime()}")
-    update(wordIds, wordTopicCounts, batchTime, token)
-    println(
+    logInfo(s"$token: update model at ${timer.getReadableRunnningTime()}")
+    model.lock.fetchLock(token)
+    model.update(wordIds, wordTopicCounts, batchTime)
+    model.lock.releaseLock(token)
+    logInfo(
       s"/////////////////////////////////////////////////\n" +
       s"Log(likelihood) w/  prior: ${logLikelihood(priorNwt, priorNt, wordTopicCounts, docTopicCounts.toSeq, docs)}\n" +
       s"Log(likelihood) w/o prior: ${logLikelihood(wordTopicCounts, docTopicCounts.toSeq, docs)}\n" +
       s"/////////////////////////////////////////////////")
 
 
-    println(s"$token: update success at ${timer.getReadableRunnningTime()}")
+    logInfo(s"$token: update success at ${timer.getReadableRunnningTime()}")
     docs.map(new IdDocInstance(_))
-  }
-
-  private def syncParameter(wordIds: Array[Long], batchTime: Long, token: String):
-  (Array[Double], Map[Long, Array[Double]]) = {
-    model.lock.fetchLock(token)
-    val (lastBatchTime , lastUpdateTimes) = model.redisVocab.getLastUpdateBatchTime(wordIds)
-    val priorNwt = Glint.pullData(wordIds, model.priorWordTopicCountMat)
-    val priorNt = Glint.pullData((0L until K.toLong).toArray, model.priorTopicCountVec)
-
-    println("priorNt: " + priorNt.mkString(" "))
-    val duration = model.duration
-    if (lastBatchTime != -1 && lastBatchTime < batchTime) {
-      val batchDelta = (batchTime - lastBatchTime) / duration
-      println(s"batchDelta: $batchTime - $lastBatchTime / $duration = " + batchDelta)
-      val yeta = math.pow(rate , batchDelta)
-      // nt = math.pow(rate, batchDelta) * nt
-      val deltaNt = priorNt.map(- _ * (1 - yeta))
-      Range(0, priorNt.length).foreach(k=> priorNt(k) *= yeta)
-      Glint.pushData(deltaNt, model.priorTopicCountVec)
-    }
-    println("priorNt: " + priorNt.mkString(" "))
-    val tempNt = Glint.pullData((0L until K.toLong).toArray, model.priorTopicCountVec)
-    println("tempNt: " + tempNt.mkString(" "))
-
-    val deltaNwt = priorNwt.zip(lastUpdateTimes).filter{
-      case ((wid, vec), lastTime) =>
-        lastTime > 0 && lastTime < batchTime
-    }.map{
-      case ((wid, vec), lastTime) =>
-        val batchDelta = (batchTime - lastBatchTime) / duration
-        val yeta = math.pow(rate , batchDelta)
-        val ret = vec.zipWithIndex.map(x => (wid, x._2, - x._1 * (1-yeta)) )
-        Range(0, vec.length).foreach(k=> vec(k) *= yeta)
-        ret
-    }.flatMap(_.toSeq)
-    Glint.pushData(deltaNwt, model.priorWordTopicCountMat)
-    model.redisVocab.updateBatchTime(wordIds, batchTime)
-    model.lock.releaseLock(token)
-    (priorNt, priorNwt)
   }
 
   def logLikelihood(wordTopicCounts: Seq[(Long, Int, Double)],
@@ -198,6 +167,33 @@ class StreamLdaLearner(val iteration: Int,
     sum / count
   }
 
+
+
+  def logLikelihood(priorNwt: Map[Long, Array[Double]],
+                    priorNt: Array[Double],
+                    docs: Seq[IdDoc]): Double = {
+    val wordTopicCounts = docs.
+      flatMap(_.toSeq).groupBy(x => x).map {
+      entry =>
+        val (term, topic) = entry._1
+        val cnt = entry._2.size
+        (term, topic, cnt.toDouble)
+    }.toSeq
+
+    val docTopicCounts = docs.zipWithIndex.flatMap {
+      case (doc, d) =>
+        doc.map(x => (d, x._2))
+    }.groupBy(x => x).map {
+      entry =>
+        val (d, topic) = entry._1
+        val cnt = entry._2.size
+        (d, topic, cnt.toDouble)
+    }.toSeq
+
+    logLikelihood(priorNwt, priorNt, wordTopicCounts, docTopicCounts, docs)
+  }
+
+
   def logLikelihood(priorNwt: Map[Long, Array[Double]],
                     priorNt: Array[Double],
                     wordTopicCounts: Seq[(Long, Int, Double)],
@@ -236,36 +232,6 @@ class StreamLdaLearner(val iteration: Int,
     ndt.foreach(_._2 :/= totNdt)
 
     logLikelihood(nwt, ndt, docs)
-  }
-
-  private def update(wordIds: Array[Long],
-                     wordTopicCounts: Seq[(Long, Int, Double)],
-                     time: Long,
-                     token: String): Unit = {
-
-    model.lock.fetchLock(token)
-
-    val wordTopicDelta = wordTopicCounts.map{
-      case (wid, topic, cnt) =>
-        (wid, topic, cnt * rate)
-    }
-
-    Glint.pushData(wordTopicDelta, model.priorWordTopicCountMat)
-
-    val topicDelta = Array.fill[Double](K)(0)
-    wordTopicDelta.foreach {
-      case (wid, topic, cnt) =>
-        topicDelta(topic) += cnt
-    }
-    Await.result(
-      model.priorTopicCountVec.push((0L until K.toLong).toArray, topicDelta),
-      Duration.Inf
-    )
-
-    println("topicDelta: " + topicDelta.mkString(" "))
-    val rest = Glint.pullData((0L until K.toLong).toArray, model.priorTopicCountVec)
-    println("after update: " + rest.mkString(" "))
-    model.lock.releaseLock(token)
   }
 
 

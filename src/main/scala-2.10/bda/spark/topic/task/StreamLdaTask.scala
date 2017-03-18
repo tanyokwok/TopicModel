@@ -5,6 +5,7 @@ import bda.spark.topic.stream.{StreamLda, StreamLdaLearner}
 import bda.spark.topic.stream.io.{FileReader, StreamReader}
 import com.github.javacliparser._
 import org.apache.spark.SparkConf
+import org.apache.spark.storage.StorageLevel
 import org.apache.spark.streaming.{Seconds, StreamingContext}
 
 /**
@@ -52,22 +53,27 @@ class StreamLdaTask extends Task{
     val conf = new SparkConf().setAppName("StreamLda")
     //   conf.setMaster("local[5]")
     conf.set("spark.network.timeout", s"${timeOutOpt.getValue}s")
+    conf.set("spark.executor.memory", "10g")
     conf.set("spark.executor.heartbeatInterval", s"${timeOutOpt.getValue}s")
+    conf.set("spark.streaming.unpersist", "true")
     val ssc = new StreamingContext(conf, Seconds(durationOpt.getValue/1000))
 
     val stream = streamReader.getInstances(ssc, durationOpt.getValue)
-
     stream.cache()
-
     val output = lda.train(stream)
 
     output.foreachRDD {
       rdd =>
         println(s"n(RDD): ${rdd.count()}")
         println("Output Topic Words")
-        ldaModel.topicWords(10).foreach{
-          x => println(x.toArray.sortBy(_._2).map(x=> (x._1, x._2.toInt))
-            .mkString(" "))
+        ldaModel.topicWords(20).foreach{
+          x =>
+            val report = x.toArray.sortBy(_._2).reverse.map(x=> (x._1, x._2.toInt))
+
+            println("================================")
+            println(report.mkString(" "))
+            println(report.slice(5,15).map(_._1).mkString(" "))
+            println("================================")
         }
     }
     ssc.start()

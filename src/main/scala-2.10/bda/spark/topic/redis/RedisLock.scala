@@ -1,5 +1,6 @@
 package bda.spark.topic.redis
 
+import org.apache.spark.Logging
 import redis.clients.jedis.{Jedis, JedisCluster, JedisCommands}
 
 import collection.JavaConversions._
@@ -8,7 +9,7 @@ import collection.JavaConversions._
   */
 class RedisLock(jedis: JedisCommands,
                 lockKey: String,
-                expired: Long) {
+                expired: Long) extends Logging{
 
   def clear(): Unit ={
     if (jedis != null){
@@ -22,16 +23,16 @@ class RedisLock(jedis: JedisCommands,
   def fetchLock(token: String): Unit = {
     while (jedis.setnx(lockKey, token) == 0) {
       Thread.sleep(100)
-      //println(s"$token wait for lock")
+      //logInfo(s"$token wait for lock")
     }
     jedis.expire(lockKey, expired.toInt)
-    println(s"$token fetch lock $lockKey")
+    logInfo(s"$token fetch lock $lockKey")
   }
 
   def releaseLock(token: String): Unit = {
     if (jedis.get(lockKey) == token) {
       jedis.del(lockKey)
-      println(s"$token release lock $lockKey")
+      logInfo(s"$token release lock $lockKey")
     }
   }
 

@@ -3,6 +3,7 @@ package bda.spark.topic.redis
 import java.util
 import java.util.Map.Entry
 
+import org.apache.spark.Logging
 import redis.clients.jedis._
 import redis.clients.jedis.exceptions.JedisClusterException
 import redis.clients.util.JedisClusterCRC16
@@ -16,7 +17,7 @@ import scala.collection.mutable.ArrayBuffer
 class RedisVocab(val maxVocabSize: Long,
                  val jedis: Jedis,
                  expired: Long)
-  extends Serializable{
+  extends Serializable {
 
   val vocabKey = "lda.vocab"
   val timeKey = "lda.vocab.age"
@@ -35,7 +36,6 @@ class RedisVocab(val maxVocabSize: Long,
     jedis.del(lockKey)
     jedis.del(batchWordKey)
     jedis.del(batchKey)
-    println(vocabSize)
     assert(vocabSize == 0)
   }
 
@@ -70,8 +70,8 @@ class RedisVocab(val maxVocabSize: Long,
     pipeline.sync()
 
 
-    (if (ret.get() == null) -1 else ret.get().toLong,
-      reps.map(_.get().toLong))
+    (if (ret.get() == null) -1L else ret.get().toLong,
+      reps.map( x => if (x.get() == null) -1L else x.get().toLong))
   }
 
   def getTermIds(terms: Array[String], time: Long): Seq[Long] = {
@@ -144,7 +144,6 @@ class RedisVocab(val maxVocabSize: Long,
         pipeline.hset(vocabKey, term, id.toString)
         pipeline.hset(countKey, term, "0")
         pipeline.zadd(timeKey, time.toDouble, term)
-        pipeline.hset(batchWordKey, id.toString, time.toString)
     }
   }
 
