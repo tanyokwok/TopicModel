@@ -87,7 +87,6 @@ class VocabManager(val ldaModel: PsStreamLdaModel,
     redisVocab.incUseCount(knwWord.map(_._1._1))
 
     word2id ++= knwWord.map(x => (x._1._1, x._2)).toMap
-    logInfo(s"[Build Vocab] try to push data at ${timer.getReadableRunnningTime()}")
 
 
     var deltaVec: Array[Double] = null
@@ -106,6 +105,8 @@ class VocabManager(val ldaModel: PsStreamLdaModel,
       deltaVec = ldaModel.lazyClearWordParameter(luckyIds.zip(lastTimes),lastBatchTime, time, token)
       ldaModel.lazyClearTopicPararmeters(deltaVec, time, token)
       redisVocab.incUseCount(luckyWord2id.map(_._1))
+    } else {
+      logInfo("Have no unkown words")
     }
 
     logInfo(s"[Build Vocab] try to release lock at ${timer.getReadableRunnningTime()}")

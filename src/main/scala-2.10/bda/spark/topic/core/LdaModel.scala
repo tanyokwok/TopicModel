@@ -436,12 +436,12 @@ class PsStreamLdaModel(val K: Int,
     val deltaVec = Array.fill[Double](K)(0)
     if (lastBatchTime < batchTime) {
       val batchDelta = if (lastBatchTime >= 0) (batchTime - lastBatchTime) / duration else 1
-      logInfo(s"batchDelta: $batchTime - $lastBatchTime / $duration = " + batchDelta)
       val yeta = math.pow(1 - rate , batchDelta)
       // nt = math.pow(rate, batchDelta) * nt
       for (i <- 0 until K) {
         deltaVec(i) += (yeta - 1) * priorNt(i)
       }
+      Glint.pushData(deltaVec, priorTopicCountVec)
       Range(0, priorNt.length).foreach(k=> priorNt(k) *= yeta)
     }
 
