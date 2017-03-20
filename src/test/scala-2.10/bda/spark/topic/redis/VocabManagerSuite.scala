@@ -5,7 +5,8 @@ import java.util.concurrent.Executors
 
 import bda.spark.topic.core.{PsLdaModel, PsStreamLdaModel}
 import bda.spark.topic.glint.Glint
-import bda.spark.topic.stream.preprocess.{Formatter, VocabManager}
+import bda.spark.topic.local.preprocess.VocabManager
+import bda.spark.topic.stream.preprocess.Formatter
 
 import collection.JavaConversions._
 import scala.util.Random
@@ -66,10 +67,5 @@ object VocabManagerSuite {
     }
 
     ldaModel.destroy()
-    val allCounters: util.Map[String, String] = ldaModel.jedis.hgetAll("lda.vocab.count")
-
-    println(allCounters.toMap.mkString(" "))
-    assert( allCounters.toMap.map(x=>x._2.toInt).filter( _ != 0 ).size == 0)
-
   }
 }

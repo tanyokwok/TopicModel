@@ -21,7 +21,8 @@ class StreamLdaLearner(val iteration: Int,
   val V = model.V
   val K = model.K
   val rate = model.rate
-  def update(batch: Seq[IdDocInstance], token: String, batchTime: Long, word2id: mutable.Map[String, Long]): Seq[IdDocInstance]= {
+  def update(batch: Seq[IdDocInstance], token: String,
+             batchTime: Long, word2id: mutable.Map[String, Long]): Seq[IdDocInstance]= {
 
     val timer = new Timer()
     val wordCount = batch.flatMap(_.tokens.toSeq).size
@@ -35,10 +36,7 @@ class StreamLdaLearner(val iteration: Int,
     val batchNt = batchNdt.reduce(_ + _)
 
     val wordIds = docs.flatMap(_.map(_._1)).distinct.toArray
-    model.lock.fetchLock(token)
-    val (priorNt, priorNwt) = model.lazySyncParameter(wordIds, batchTime)
-    model.lock.releaseLock(token)
-
+    val (priorNt, priorNwt) = model.fetchParameter(wordIds, batchTime)
 
     // n(d,t) + alpha
     batchNdt.foreach{
@@ -76,9 +74,6 @@ class StreamLdaLearner(val iteration: Int,
     }
 
     val stableSamples = topicSamples.reverse.take(5)
-    val vocab = model.redisVocab.loadVocab
-    val id2word = word2id.map(x => (x._2, x._1))
-    //val wordTopicCounts = docs.flatMap(_.toSeq).groupBy(x => x).map {
     //取最后5次采样的平均值
     val wordTopicCounts = stableSamples.flatMap(_.toSeq).
       flatMap(_.toSeq).groupBy(x => x).map {
@@ -102,11 +97,8 @@ class StreamLdaLearner(val iteration: Int,
         (d, topic, cnt.toDouble/ 5)
     }
 
-
+    model.update(wordTopicCounts, batchTime, token)
     logInfo(s"$token: update model at ${timer.getReadableRunnningTime()}")
-    model.lock.fetchLock(token)
-    model.update(wordIds, wordTopicCounts, batchTime)
-    model.lock.releaseLock(token)
     logInfo(
       s"/////////////////////////////////////////////////\n" +
       s"Log(likelihood) w/  prior: ${logLikelihood(priorNwt, priorNt, wordTopicCounts, docTopicCounts.toSeq, docs)}\n" +

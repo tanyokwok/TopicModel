@@ -20,7 +20,7 @@ package bda.spark.topic.core
 import java.util
 
 import bda.spark.topic.glint.Glint
-import bda.spark.topic.redis.{RedisLock, RedisVocab, RedisVocabClient, RedisVocabPipeline}
+import bda.spark.topic.redis._
 import breeze.linalg.{DenseMatrix, DenseVector}
 import com.typesafe.config.ConfigFactory
 
@@ -29,7 +29,7 @@ import scala.collection.mutable
 import glint._
 import glint.models.client.{BigMatrix, BigVector}
 import org.apache.spark.Logging
-import redis.clients.jedis.{HostAndPort, Jedis, JedisCluster}
+import redis.clients.jedis.{HostAndPort, Jedis, JedisCluster, JedisPool}
 
 import collection.JavaConversions._
 import scala.collection.immutable.HashSet
@@ -182,28 +182,91 @@ class PsStreamLdaModel(val K: Int,
                       val duration: Long
                       ) extends Serializable with Logging{
 
-
   private val lockKey = "lda.ps.lock"
-  private val jedisClusterNodes = HashSet[HostAndPort](new HostAndPort(host, port))
+  private val stageKey = "lda.stage.status"
+  val STAGE_FINISH = "STAGE_FINISH"
+  val STAGE_RUNING = "STAGE_RUNING"
+  val STAGE_BUILD_VOCAB = "STAGE_BUILD_VOCAB"
 
   @transient
-  lazy val jedis = {
-    new Jedis(host, port)
+  lazy val jedisPool = {
+    new JedisPool(host, port)
     //new JedisCluster(jedisClusterNodes)
   }
 
-  jedis.del(lockKey)
   @transient
   lazy val lock = {
-    //val jedis: JedisCluster = new JedisCluster(jedisClusterNodes)
-    val ret = new RedisLock(jedis, lockKey, expired)
+    val ret = new RedisPoolLock(jedisPool, lockKey, expired)
     ret
   }
 
-  @transient
-  lazy val redisVocab = new RedisVocab(V, jedis, expired)
+  def setStage(time: Long, status: String): Boolean= {
+    var jedis: Jedis = null
 
-  redisVocab.clear()
+    try{
+      jedis = jedisPool.getResource
+      val stage = jedis.get(stageKey)
+      if (stage == null) {
+        println(s"Set `$time $status`, current is `$stage`")
+        jedis.setex(stageKey, expired.toInt, s"$time $status")
+      } else {
+        var flag = true
+        while (flag) {
+          val arr = stage.split(" ")
+          val stageTime = arr(0).toLong
+          val stageStatus = arr(1)
+
+          if (stageTime > time) {
+            return false
+          } else if (stageTime < time) {
+            if (stageStatus == STAGE_FINISH) {
+              println(s"Set `$time $status`, current is `$stage`")
+              jedis.setex(stageKey, expired.toInt, s"$time $status")
+              flag = false
+            }
+          } else {
+            println(s"Set `$time $status`, current is `$stage`")
+            jedis.setex(stageKey, expired.toInt, s"$time $status")
+            flag = false
+          }
+
+          if (flag) {
+            Thread.sleep(1000)
+          }
+        }
+      }
+
+      return true
+    } finally{
+      if (jedis != null) {
+        jedis.close()
+      }
+    }
+  }
+
+  @transient
+  lazy val redisVocab ={
+    //val jedis1 = new Jedis(host, port)
+    //val jedis2 = new Jedis(host, port)
+
+    val lock = new RedisPoolLock(jedisPool, "lda.vocab.lock", expired)
+    new RedisPoolVocab(V, jedisPool, lock, expired)
+  }
+
+  def clear(): Unit = {
+    var jedis: Jedis = null
+    try{
+      jedis = jedisPool.getResource
+      jedis.del(stageKey)
+      jedis.del(lockKey)
+    } finally{
+      if (jedis != null) jedis.close()
+    }
+    redisVocab.clear()
+  }
+
+  clear()
+
 
   @transient
   val client = glint.Client(ConfigFactory.parseFile(new java.io.File("resources/glint.conf")))
@@ -216,6 +279,7 @@ class PsStreamLdaModel(val K: Int,
     client.stop()
     redisVocab.clear()
     lock.clear()
+    jedisPool.close()
   }
 
   type TOPICASSIGN = (String, Double)
@@ -227,14 +291,15 @@ class PsStreamLdaModel(val K: Int,
     val lockToken = "PsStreamLdaModel"
     redisVocab.fetchLock(lockToken)
     val id2word = redisVocab.loadVocab
-
     val ids = id2word.map(_._1).toArray
-    val matrix = Glint.pullData(ids, priorWordTopicCountMat)
-    val vector = Glint.pullData((0L until K.toLong).toArray, priorTopicCountVec)
     val (batchTime, lastUpdateTime) = redisVocab.getLastUpdateBatchTime(ids)
+    val idTimes = ids.zip(lastUpdateTime).filter( _._2 <= batchTime)
+    val matrix = Glint.pullData(idTimes.map(_._1), priorWordTopicCountMat)
+    val vector = Glint.pullData((0L until K.toLong).toArray, priorTopicCountVec)
+    redisVocab.relaseLock(lockToken)
 
     var totCount = 0.0
-    ids.zip(lastUpdateTime).foreach{
+    idTimes.foreach{
       case (id, lastTime) =>
         assert(lastTime <= batchTime)
         if (lastTime < batchTime) {
@@ -259,25 +324,23 @@ class PsStreamLdaModel(val K: Int,
     }
 
     println(s"count: ($totCount, ${vector.sum})")
-
-
-    redisVocab.relaseLock(lockToken)
     queues
   }
 
   def check(token: String): Unit = {
     val id2word = redisVocab.loadVocab
     val ids = id2word.map(_._1).toArray
-    println("vocabSize:" + ids.size + " " + ids.distinct.size)
 
-    val matrix = Glint.pullData(ids, priorWordTopicCountMat)
-    val vector = Glint.pullData((0L until K.toLong).toArray, priorTopicCountVec)
     val (batchTime, lastUpdateTime) = redisVocab.getLastUpdateBatchTime(ids)
+    val idTimes = ids.zip(lastUpdateTime).filter( _._2 <= batchTime)
+    val matrix = Glint.pullData(idTimes.map(_._1), priorWordTopicCountMat)
+    val vector = Glint.pullData((0L until K.toLong).toArray, priorTopicCountVec)
 
     var totCount = 0.0
-    ids.zip(lastUpdateTime).foreach {
+    var totSum = 0.0
+    idTimes.foreach{
       case (id, lastTime) =>
-        assert(lastTime <= batchTime)
+        totSum += matrix(id).sum
         if (lastTime < batchTime) {
           val batchDelta = (batchTime - lastTime) / duration
           for (i <- 0 until K) {
@@ -287,42 +350,34 @@ class PsStreamLdaModel(val K: Int,
         totCount += matrix(id).sum
     }
 
-    logInfo(s"[$token] count: ($totCount, ${vector.sum})")
+    logInfo(s"[$token] count: ($totSum, $totCount, ${vector.sum})")
   }
 
-  def addParameter(rows: Array[Long], time: Long): Unit = {
-    val deltaVec = Array.fill[Double](K)(rows.size * beta)
-    val deltaMat = rows.flatMap{
-      row =>
-        Range(0, K).map{
-          k =>
-            (row, k, beta)
-        }
-    }
-    Glint.pushData(deltaMat, priorWordTopicCountMat)
-    Glint.pushData(deltaVec, priorTopicCountVec)
-    redisVocab.updateBatchTime(rows, time)
-  }
 
-  def lazyClearParameter(rows: Array[Long], time: Long) = {
-    val (batchTime, lastUpdateTimes) = redisVocab.getLastUpdateBatchTime(rows)
+  /**
+    * 当词被替换的时候为了更新PS时调用
+    * @param batchTime
+    */
+  def lazyClearWordParameter(wordIdTimes: Array[(Long, Long)], lastBatchTime: Long, batchTime: Long, token: String) = {
+    lock.fetchLock(token + "-lazyClear")
+    val rows = wordIdTimes.map(_._1)
     val matrix = Glint.pullData(rows, priorWordTopicCountMat)
 
     val deltaVec = Array.fill[Double](K)(0)
-    if (batchTime < time) {
-      val batchDelta = if (batchTime >= 0) (time - batchTime) / duration else 1
+    if (lastBatchTime < batchTime) {
+      val batchDelta = if (lastBatchTime >= 0) (batchTime - lastBatchTime) / duration else 1
       val yeta = math.pow(1 - rate , batchDelta)
       val nt_ = Glint.pullData((0L until K.toLong).toArray, priorTopicCountVec)
       for (i <- 0 until K) {
         deltaVec(i) += (yeta - 1) * nt_(i)
       }
     }
-    val deltaMatrix = rows.zip(lastUpdateTimes).filter{
+    val deltaMatrix = wordIdTimes.filter{
       case (wid, lastTime) =>
-        lastTime < time
+        lastTime < batchTime
     }.map{
       case (wid, lastTime) =>
-        val batchDelta = if (lastTime >= 0) (time - lastTime) / duration else 1
+        val batchDelta = if (lastTime >= 0) (batchTime - lastTime) / duration else 1
         val yeta = math.pow(1 - rate , batchDelta)
         val nwt_ = matrix(wid)
         Range(0, K).map{
@@ -332,30 +387,49 @@ class PsStreamLdaModel(val K: Int,
         }
     }.flatMap(_.toSeq)
 
-    println("new word: " + lastUpdateTimes.filter( _ < 0 ).size)
-
     Glint.pushData(deltaMatrix, priorWordTopicCountMat)
+    redisVocab.updateVocabBatchTime(rows, batchTime)
+    lock.releaseLock(token + "-lazyClear")
+    deltaVec
+  }
 
-    val nt_ = Glint.pullData((0L until K.toLong).toArray, priorTopicCountVec)
-    println("nt_ :" + nt_.mkString(" "))
+  def lazyClearTopicPararmeters(deltaVec: Array[Double], batchTime: Long, token: String): Unit = {
+
+    lock.fetchLock(token + "-lazyClear")
     Glint.pushData(deltaVec, priorTopicCountVec)
-    println("deltaVec:" + deltaVec.mkString(" "))
-    val nt_2 = Glint.pullData((0L until K.toLong).toArray, priorTopicCountVec)
-    println("nt_2 :" + nt_2.mkString(" "))
-    redisVocab.updateBatchTime(rows, time)
-    check("lazyClear")
+    redisVocab.updateBatchTime(batchTime)
+
+    check(token + "-lazyClear")
+    lock.releaseLock(token+ "-lazyClear")
+  }
+
+  /**
+    * 当词在语料中出现,为了使得词的参数为最新状态时调用
+    * @param rawWordIds
+    * @param batchTime
+    */
+  def lazySyncParameter(rawWordIds: Array[Long], batchTime: Long, token: String): Unit = {
+    redisVocab.fetchLock(token + "-lazySync")
+    val posWordIds = rawWordIds.filter(_ >= 0)
+    val (lastBatchTime, lastUpdateTimes) = redisVocab.getLastUpdateBatchTime(posWordIds)
+
+    val wordIdTimes = posWordIds.zip(lastUpdateTimes).filter {
+      case (wid, lastTime) =>
+        assert(lastTime <= batchTime)
+        lastTime < batchTime
+    }
+
+    lazySyncParameter(wordIdTimes, lastBatchTime, batchTime, token + "-lazySync")
+
+    check( token + "-lazySync")
+    redisVocab.relaseLock(token + "-lazySync")
   }
 
 
-  /**
-    * 将词Id对应的参数更新为最新的状态
-    * @param wordIds
-    * @param batchTime 当前时间
-    * @return
-    */
-  def lazySyncParameter(wordIds: Array[Long], batchTime: Long):
-  (Array[Double], Map[Long, Array[Double]]) = {
-    val (lastBatchTime , lastUpdateTimes) = redisVocab.getLastUpdateBatchTime(wordIds)
+  private def lazySyncParameter(wordIdTimes: Array[(Long, Long)], lastBatchTime: Long, batchTime: Long, token: String) = {
+
+    //lock.fetchLock(token)
+    val wordIds = wordIdTimes.map(_._1)
     val priorNwt = Glint.pullData(wordIds, priorWordTopicCountMat)
     val priorNt = Glint.pullData((0L until K.toLong).toArray, priorTopicCountVec)
 
@@ -371,9 +445,8 @@ class PsStreamLdaModel(val K: Int,
       Range(0, priorNt.length).foreach(k=> priorNt(k) *= yeta)
     }
 
-    assert(lastUpdateTimes.filter(x => x < 0).size == 0)
     var minusCount = 0.0
-    val deltaNwt = wordIds.zip(lastUpdateTimes).filter{
+    val deltaNwt = wordIdTimes.filter{
       case (wid, lastTime) =>
         lastTime < batchTime
     }.map{
@@ -389,25 +462,45 @@ class PsStreamLdaModel(val K: Int,
             (wid, i, ret)
         }
     }.flatMap(_.toSeq)
-    check("lazySync")
     Glint.pushData(deltaNwt, priorWordTopicCountMat)
-    //Glint.pushData(deltaVec, priorTopicCountVec)
     redisVocab.updateBatchTime(wordIds, batchTime)
-    logInfo("minusCount: " + minusCount)
-    check("lazySync")
+
+    //lock.releaseLock(token)
+    (priorNt, priorNwt)
+  }
+
+  /**
+    * 将词Id对应的参数更新为最新的状态
+    * @param wordIds
+    * @param batchTime 当前时间
+    * @return
+    */
+  def lazyFetchParameter(wordIds: Array[Long], batchTime: Long, token: String):
+  (Array[Double], Map[Long, Array[Double]]) = {
+    val (lastBatchTime , lastUpdateTimes) = redisVocab.getLastUpdateBatchTime(wordIds)
+    val wordIdTimes = wordIds.zip(lastUpdateTimes)
+    lazySyncParameter(wordIdTimes, lastBatchTime, batchTime, token + "-lazyFetch")
+  }
+
+
+  def fetchParameter(rawWordIds: Array[Long], batchTime: Long): (Array[Double], Map[Long, Array[Double]]) = {
+    val wordIds = rawWordIds
+    val priorNwt = Glint.pullData(wordIds, priorWordTopicCountMat)
+    val priorNt = Glint.pullData((0L until K.toLong).toArray, priorTopicCountVec)
     (priorNt, priorNwt)
   }
 
 
-  def update(wordIds: Array[Long],
-                     wordTopicCounts: Seq[(Long, Int, Double)],
-                     time: Long) = {
-
+  def update(wordTopicCounts: Seq[(Long, Int, Double)],
+             time: Long,
+             token: String) = {
+    lock.fetchLock(token + "-update")
     val wordTopicDelta = wordTopicCounts.map{
       case (wid, topic, cnt) =>
         (wid, topic, cnt * rate)
     }
 
+    check(token + "-before-update")
     Glint.pushData(wordTopicDelta, priorWordTopicCountMat)
 
     val topicDelta = Array.fill[Double](K)(0)
@@ -424,7 +517,8 @@ class PsStreamLdaModel(val K: Int,
     val rest = Glint.pullData((0L until K.toLong).toArray, priorTopicCountVec)
     logInfo("after update: " + rest.mkString(" "))
 
-    check("update")
+    check(token + "-update")
+    lock.releaseLock(token + "-update")
   }
 
 }

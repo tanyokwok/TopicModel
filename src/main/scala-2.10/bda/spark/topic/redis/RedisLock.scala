@@ -1,7 +1,7 @@
 package bda.spark.topic.redis
 
 import org.apache.spark.Logging
-import redis.clients.jedis.{Jedis, JedisCluster, JedisCommands}
+import redis.clients.jedis.{Jedis, JedisCluster, JedisCommands, Pipeline}
 
 import collection.JavaConversions._
 /**
@@ -10,6 +10,7 @@ import collection.JavaConversions._
 class RedisLock(jedis: JedisCommands,
                 lockKey: String,
                 expired: Long) extends Logging{
+
 
   def clear(): Unit ={
     if (jedis != null){

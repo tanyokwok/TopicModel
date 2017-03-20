@@ -13,11 +13,11 @@ import scala.collection.immutable.HashSet
   */
 class RedisVocabSuite extends FunSuite{
 
-
-
   test("RedisVocabPipeline") {
     val jedis = new Jedis("bda04", 6379)
-    val client = new RedisVocab(8L, jedis, 6000)
+    val jedis2 = new Jedis("bda04", 6379)
+    val redisLock = new RedisLock(jedis2, "lock", 6000)
+    val client = new RedisVocab(8L, jedis, redisLock, 6000)
     client.clear()
     assert(client.vocabSize == 0)
 

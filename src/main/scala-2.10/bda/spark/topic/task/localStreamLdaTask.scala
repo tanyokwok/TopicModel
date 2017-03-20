@@ -1,8 +1,8 @@
 package bda.spark.topic.task
 
 import bda.spark.topic.core.PsStreamLdaModel
+import bda.spark.topic.local.preprocess.VocabManager
 import bda.spark.topic.stream.io.{FileReader, StreamReader}
-import bda.spark.topic.stream.preprocess.VocabManager
 import bda.spark.topic.stream.{StreamLda, StreamLdaLearner}
 import com.github.javacliparser._
 import org.apache.spark.SparkConf

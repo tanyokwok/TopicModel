@@ -1,6 +1,7 @@
 package bda.spark.topic.task
 
 import bda.spark.topic.core.PsStreamLdaModel
+import bda.spark.topic.glint.Glint
 import bda.spark.topic.stream.{StreamLda, StreamLdaLearner}
 import bda.spark.topic.stream.io.{FileReader, StreamReader}
 import com.github.javacliparser._
@@ -18,6 +19,8 @@ class StreamLdaTask extends Task{
   val vocabSizeOpt = new IntOption("vocab", 'V', "the max size of vocabulary",
     1000000, 1, Int.MaxValue)
 
+  val semOpt = new IntOption("semaphore", 's', "the semaphore to network through out", 1, 1, Int.MaxValue)
+
   val topicNumOpt = new IntOption("topic", 'K', "number of topics",
     10, 1, Int.MaxValue)
 
@@ -28,7 +31,7 @@ class StreamLdaTask extends Task{
   val iterOpt = new IntOption("batch_iter", 'i', "the iteration for each batch", 10, 1, Int.MaxValue)
   val durationOpt = new IntOption("duration", 'd', "the duration for each batch", 60000, 10000, Int.MaxValue)
 
-  val streamReaderOpt = new ClassOption("StreamReader", 's', "the producer of stream",
+  val streamReaderOpt = new ClassOption("StreamReader", 'S', "the producer of stream",
     classOf[StreamReader], "FileReader")
 
   val timeOutOpt = new IntOption("time_out", 't',
@@ -42,6 +45,7 @@ class StreamLdaTask extends Task{
     val alpha = alphaOpt.getValue
     val beta = betaOpt.getValue
 
+    Glint.semaphore = semOpt.getValue
     val ldaModel = new PsStreamLdaModel(K, V, alpha, beta, rateOpt.getValue,
       host, port, timeOutOpt.getValue, durationOpt.getValue)
     val learner = new StreamLdaLearner(iterOpt.getValue, ldaModel)
@@ -64,16 +68,8 @@ class StreamLdaTask extends Task{
 
     output.foreachRDD {
       rdd =>
-        println(s"n(RDD): ${rdd.count()}")
-        println("Output Topic Words")
-        ldaModel.topicWords(20).foreach{
-          x =>
-            val report = x.toArray.sortBy(_._2).reverse.map(x=> (x._1, x._2.toInt))
-
-            println("================================")
-            println(report.mkString(" "))
-            println(report.slice(5,15).map(_._1).mkString(" "))
-            println("================================")
+        if (rdd != null) {
+          println(s"n(RDD): ${rdd.count()}")
         }
     }
     ssc.start()

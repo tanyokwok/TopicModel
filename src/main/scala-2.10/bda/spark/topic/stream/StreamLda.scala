@@ -1,6 +1,6 @@
 package bda.spark.topic.stream
 
-import bda.spark.topic.core.Instance
+import bda.spark.topic.core.{Instance, TextDocInstance}
 import bda.spark.topic.redis.RedisVocabClient
 import bda.spark.topic.stream.preprocess.VocabManager
 import bda.spark.topic.utils.Timer
@@ -16,34 +16,41 @@ class StreamLda(val lda: StreamLdaLearner) extends Serializable with Logging{
   val maxVocabSize: Long = lda.model.V
 
   private def train(data: RDD[Instance], time: Long): RDD[Instance] = {
-    data.mapPartitionsWithIndex{
-      case (index, instancesInPartition) =>
-        val timer = new Timer()
-        val id = s"partition-$index at time-$time"
-        //logInfo(s"train $id")
-        //vocabulary manager
-        val vocabManager = new VocabManager(lda.model, s"partition-$index+time-$time")
+    val timer = new Timer()
+    val id = s"RDD-${data.id}+time-$time"
+    val vocabManager = new VocabManager(lda.model, id)
+    logInfo(s"[VocabManager-$time] build vocabulary at time ${timer.getReadableRunnningTime()}")
 
-       // logInfo(s"$id: transfrom data ")
-        logInfo(s"[StreamLda-$id] begin transform at time ${timer.getReadableRunnningTime()}")
-        //logInfo("text: " + instancesInPartition.take(10).mkString(" "))
-        //get batch train data
-        val batch = vocabManager.transfrom(instancesInPartition, time)
+    if (lda.model.setStage(time, lda.model.STAGE_RUNING)) {
+      val word2id = vocabManager.buildVocab(data, time)
+      logInfo(s"[VocabManager-$time] build vocabulary success at time ${timer.getReadableRunnningTime()}")
+      lda.model.lazySyncParameter(word2id.map(_._2).toArray, time, id)
 
-        logInfo(s"[StreamLda-$id] begin update at time ${timer.getReadableRunnningTime()}")
-       // logInfo(s"$id: update lda model")
-        //asynchronized update lda model
+      logInfo(s"[StreamLda-$id] begin transform at time ${timer.getReadableRunnningTime()}")
+      val batch = vocabManager.transfrom(data, time)
+      logInfo(s"[StreamLda-$id] end transform at time ${timer.getReadableRunnningTime()}")
 
-        val assign = lda.update(batch, id, time, vocabManager.word2id)
-       // logInfo(s"$id: decode topic assign")
-        logInfo(s"[StreamLda-$id] begin decode at time ${timer.getReadableRunnningTime()}")
-        val ret = vocabManager.decode(assign)
+      val assign = batch.mapPartitionsWithIndex {
+        case (index, instancesInPartition) =>
+          lda.update(instancesInPartition.toSeq, id + s"-$index", time, word2id).toIterator
+      }
 
-        logInfo(s"[StreamLda-$id] begin release at time ${timer.getReadableRunnningTime()}")
-        //release the usage of words
-       // logInfo(s"$id: release usage")
-        vocabManager.relaseUsage()
-        ret.toIterator
+      logInfo(s"[StreamLda-$id] begin decode at time ${timer.getReadableRunnningTime()}")
+      val ret = vocabManager.decode(assign)
+      logInfo(s"[StreamLda-$id] end decode at time ${timer.getReadableRunnningTime()}")
+      logInfo(s"[StreamLda-$id] begin release at time ${timer.getReadableRunnningTime()}")
+      ret.cache()
+      ret.count()
+
+      vocabManager.relaseUsage()
+      logInfo(s"[StreamLda-$id] end release at time ${timer.getReadableRunnningTime()}")
+
+      report()
+
+      lda.model.setStage(time, lda.model.STAGE_FINISH)
+      ret
+    } else {
+      null
     }
   }
 
@@ -52,7 +59,20 @@ class StreamLda(val lda: StreamLdaLearner) extends Serializable with Logging{
     data.transform{
       (rdd, time) =>
         val ret: RDD[Instance] = train(rdd, time.milliseconds)
+
         ret
+    }
+  }
+
+  def report(): Unit = {
+    lda.model.topicWords(20).foreach {
+      x =>
+        val report = x.toArray.sortBy(_._2).reverse.map(x => (x._1, x._2.toInt))
+
+        println("================================")
+        println(report.mkString(" "))
+        println(report.slice(5, 15).map(_._1).mkString(" "))
+        println("================================")
     }
   }
 

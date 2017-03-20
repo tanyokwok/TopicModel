@@ -12,8 +12,8 @@ import scala.concurrent.ExecutionContext.Implicits.global
   */
 object Glint {
 
-  val semaphore = 10
-  val max_buff_size = 12800
+  var semaphore = 1
+  val max_buff_size = 32000
 
   def pullData(cols: Array[Long],
                vector: BigVector[Double]): Array[Double]= {
@@ -51,6 +51,7 @@ object Glint {
     val K = matrix.cols
     val batch_rows = max_buff_size / K
     val push_time = rows.size / batch_rows
+    println(s"Pull Time: " + push_time)
     val ret = Range(0, push_time + 1).map {
       t =>
         //use parameter server

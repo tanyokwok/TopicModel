@@ -16,26 +16,26 @@ import scala.collection.mutable.ArrayBuffer
   */
 class RedisVocab(val maxVocabSize: Long,
                  val jedis: Jedis,
+                 val lock: RedisLock,
                  expired: Long)
   extends Serializable {
 
   val vocabKey = "lda.vocab"
   val timeKey = "lda.vocab.age"
-  val lockKey = "lda.vocab.lock"
   val countKey = "lda.vocab.count"
   val batchWordKey = "lda.vocab.batch.word"
   val batchKey = "lda.vocab.batch"
+  val lockKey = "lda.vocab.lock"
 
-  val lock = new RedisLock(jedis, lockKey, expired)
   val pipeline = jedis.pipelined()
-
   def clear() {
-    jedis.del(vocabKey)
-    jedis.del(timeKey)
-    jedis.del(countKey)
-    jedis.del(lockKey)
-    jedis.del(batchWordKey)
-    jedis.del(batchKey)
+    pipeline.del(Array(vocabKey):_*)
+    pipeline.del(Array(timeKey):_*)
+    pipeline.del(Array(countKey):_*)
+    pipeline.del(Array(batchWordKey):_*)
+    pipeline.del(Array(batchKey):_*)
+    pipeline.sync()
+    lock.clear()
     assert(vocabSize == 0)
   }
 
