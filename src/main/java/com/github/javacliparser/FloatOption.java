@@ -28,22 +28,22 @@ public class FloatOption extends AbstractOption {
 
     private static final long serialVersionUID = 1L;
 
-    protected double currentVal;
+    protected float currentVal;
 
-    protected double defaultVal;
+    protected float defaultVal;
 
-    protected double minVal;
+    protected float minVal;
 
-    protected double maxVal;
+    protected float maxVal;
 
     public FloatOption(String name, char cliChar, String purpose,
-            double defaultVal) {
-        this(name, cliChar, purpose, defaultVal, Double.NEGATIVE_INFINITY,
-                Double.POSITIVE_INFINITY);
+            float defaultVal) {
+        this(name, cliChar, purpose, defaultVal, Float.NEGATIVE_INFINITY,
+                Float.POSITIVE_INFINITY);
     }
 
     public FloatOption(String name, char cliChar, String purpose,
-            double defaultVal, double minVal, double maxVal) {
+            float defaultVal, float minVal, float maxVal) {
         super(name, cliChar, purpose);
         this.defaultVal = defaultVal;
         this.minVal = minVal;
@@ -51,7 +51,7 @@ public class FloatOption extends AbstractOption {
         resetToDefault();
     }
 
-    public void setValue(double v) {
+    public void setValue(float v) {
         if (v < this.minVal) {
             throw new IllegalArgumentException("Option " + getName()
                     + " cannot be less than " + this.minVal
@@ -65,39 +65,39 @@ public class FloatOption extends AbstractOption {
         this.currentVal = v;
     }
 
-    public double getValue() {
+    public float getValue() {
         return this.currentVal;
     }
 
-    public double getMinValue() {
+    public float getMinValue() {
         return this.minVal;
     }
 
-    public double getMaxValue() {
+    public float getMaxValue() {
         return this.maxVal;
     }
 
     @Override
     public String getDefaultCLIString() {
-        return doubleToCLIString(this.defaultVal);
+        return floatToCLIString(this.defaultVal);
     }
 
     @Override
     public String getValueAsCLIString() {
-        return doubleToCLIString(this.currentVal);
+        return floatToCLIString(this.currentVal);
     }
 
     @Override
     public void setValueViaCLIString(String s) {
-        setValue(cliStringToDouble(s));
+        setValue(cliStringToFloat(s));
     }
 
-    public static double cliStringToDouble(String s) {
-        return Double.parseDouble(s.trim());
+    public static float cliStringToFloat(String s) {
+        return Float.parseFloat(s.trim());
     }
 
-    public static String doubleToCLIString(double d) {
-        return Double.toString(d);
+    public static String floatToCLIString(float d) {
+        return Float.toString(d);
     }
 
     //@Override

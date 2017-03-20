@@ -16,23 +16,23 @@ object Glint {
   val max_buff_size = 32000
 
   def pullData(cols: Array[Long],
-               vector: BigVector[Double]): Array[Double]= {
+               vector: BigVector[Float]): Array[Float]= {
 
     val result_nt = vector.pull(cols)
 
-    val global_nt: Array[Double] = Await.result(result_nt, Duration.Inf)
+    val global_nt: Array[Float] = Await.result(result_nt, Duration.Inf)
     return global_nt
   }
 
-  def pullData(row: Long, matrix: BigMatrix[Double]): Array[Double] = {
+  def pullData(row: Long, matrix: BigMatrix[Float]): Array[Float] = {
     val col = matrix.cols
     val result = matrix.pull(Array.fill[Long](col)(row), (0 until col).toArray)
     val ret = Await.result(result, Duration.Inf)
     ret
   }
 
-  def pushData(vector: BigVector[Double],
-               delta: Iterable[(Long, Double)]): Unit = {
+  def pushData(vector: BigVector[Float],
+               delta: Iterable[(Long, Float)]): Unit = {
     val result = vector.push(delta.map(_._1).toArray, delta.map(_._2).toArray)
     Await.result(result, Duration.Inf)
   }
@@ -44,8 +44,8 @@ object Glint {
     * @return
     */
   def pullData(rows: Array[Long],
-               matrix: BigMatrix[Double]
-              ): Map[Long,Array[Double]] = {
+               matrix: BigMatrix[Float]
+              ): Map[Long,Array[Float]] = {
 
     val lock = new java.util.concurrent.Semaphore(semaphore) // maximum of 16 open requests
     val K = matrix.cols
@@ -61,7 +61,7 @@ object Glint {
         lock.acquire()
         val result = matrix.pull(rowIndices, colIndices)
         result.onComplete{case _ => lock.release()}
-        val data: Array[Double] = Await.result(
+        val data: Array[Float] = Await.result(
           result,
           Duration.Inf
         )
@@ -78,7 +78,7 @@ object Glint {
     ret
   }
 
-  def pushData(row: Long, vec: Array[Double], matrix: BigMatrix[Double]): Unit = {
+  def pushData(row: Long, vec: Array[Float], matrix: BigMatrix[Float]): Unit = {
     val col = matrix.cols
     val rows = Array.fill[Long](col)(row)
     val cols = (0 until col).toArray
@@ -87,7 +87,7 @@ object Glint {
     Await.result(result, Duration.Inf)
   }
 
-  def pushData(deltaMat: Map[Long, Array[Double]], matrix: BigMatrix[Double]): Unit = {
+  def pushData(deltaMat: Map[Long, Array[Float]], matrix: BigMatrix[Float]): Unit = {
     val delta = deltaMat.flatMap{
       case (wid, vec) =>
         vec.zipWithIndex.filter(_._1 > 0).map{
@@ -99,17 +99,17 @@ object Glint {
     pushData(delta, matrix)
   }
 
-  def pushData(deltaVec: Array[Double], vector: BigVector[Double]): Unit ={
+  def pushData(deltaVec: Array[Float], vector: BigVector[Float]): Unit ={
     val col = vector.size
     val result = vector.push((0L until col.toLong).toArray, deltaVec)
     Await.result(result, Duration.Inf)
   }
-  def pushData(topicCount: Iterable[(Long, Int, Double)],
-               matrix: BigMatrix[Double]): Unit = {
+  def pushData(topicCount: Iterable[(Long, Int, Float)],
+               matrix: BigMatrix[Float]): Unit = {
     val lock = new java.util.concurrent.Semaphore(semaphore)
     val rowIndices = new ArrayBuffer[Long]()
     val colIndices = new ArrayBuffer[Int]()
-    val values = new ArrayBuffer[Double]()
+    val values = new ArrayBuffer[Float]()
 
     topicCount.foreach {
       case (wid, topic, cnt) =>

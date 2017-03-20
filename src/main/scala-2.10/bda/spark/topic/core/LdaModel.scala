@@ -173,9 +173,9 @@ class PsLdaModel(override val K:Int,
 
 class PsStreamLdaModel(val K: Int,
                        val V: Long,
-                       val alpha: Double,
-                       val beta: Double,
-                       val rate: Double,
+                       val alpha: Float,
+                       val beta: Float,
+                       val rate: Float,
                        val host: String,
                        val port: Int,
                        val expired: Long,
@@ -270,8 +270,8 @@ class PsStreamLdaModel(val K: Int,
 
   @transient
   val client = glint.Client(ConfigFactory.parseFile(new java.io.File("resources/glint.conf")))
-  val priorWordTopicCountMat: BigMatrix[Double] = client.matrix[Double](V, K)
-  val priorTopicCountVec: BigVector[Double] = client.vector[Double](K)
+  val priorWordTopicCountMat: BigMatrix[Float] = client.matrix[Float](V, K)
+  val priorTopicCountVec: BigVector[Float] = client.vector[Float](K)
 
   def destroy(): Unit ={
     priorTopicCountVec.destroy()
@@ -305,7 +305,7 @@ class PsStreamLdaModel(val K: Int,
         if (lastTime < batchTime) {
           val batchDelta = (batchTime - lastTime) / duration
           for (i <- 0 until K) {
-            matrix(id)(i) = matrix(id)(i)*math.pow(1 - rate, batchDelta)
+            matrix(id)(i) = matrix(id)(i)*math.pow(1 - rate, batchDelta).toFloat
           }
         }
         totCount += matrix(id).sum
@@ -344,7 +344,7 @@ class PsStreamLdaModel(val K: Int,
         if (lastTime < batchTime) {
           val batchDelta = (batchTime - lastTime) / duration
           for (i <- 0 until K) {
-            matrix(id)(i) = matrix(id)(i) * math.pow(1 - rate, batchDelta)
+            matrix(id)(i) = matrix(id)(i) * math.pow(1 - rate, batchDelta).toFloat
           }
         }
         totCount += matrix(id).sum
@@ -363,10 +363,10 @@ class PsStreamLdaModel(val K: Int,
     val rows = wordIdTimes.map(_._1)
     val matrix = Glint.pullData(rows, priorWordTopicCountMat)
 
-    val deltaVec = Array.fill[Double](K)(0)
+    val deltaVec = Array.fill[Float](K)(0)
     if (lastBatchTime < batchTime) {
       val batchDelta = if (lastBatchTime >= 0) (batchTime - lastBatchTime) / duration else 1
-      val yeta = math.pow(1 - rate , batchDelta)
+      val yeta = math.pow(1 - rate , batchDelta).toFloat
       val nt_ = Glint.pullData((0L until K.toLong).toArray, priorTopicCountVec)
       for (i <- 0 until K) {
         deltaVec(i) += (yeta - 1) * nt_(i)
@@ -378,7 +378,7 @@ class PsStreamLdaModel(val K: Int,
     }.map{
       case (wid, lastTime) =>
         val batchDelta = if (lastTime >= 0) (batchTime - lastTime) / duration else 1
-        val yeta = math.pow(1 - rate , batchDelta)
+        val yeta = math.pow(1 - rate , batchDelta).toFloat
         val nwt_ = matrix(wid)
         Range(0, K).map{
           i =>
@@ -393,7 +393,7 @@ class PsStreamLdaModel(val K: Int,
     deltaVec
   }
 
-  def lazyClearTopicPararmeters(deltaVec: Array[Double], batchTime: Long, token: String): Unit = {
+  def lazyClearTopicPararmeters(deltaVec: Array[Float], batchTime: Long, token: String): Unit = {
 
     lock.fetchLock(token + "-lazyClear")
     Glint.pushData(deltaVec, priorTopicCountVec)
@@ -433,10 +433,10 @@ class PsStreamLdaModel(val K: Int,
     val priorNwt = Glint.pullData(wordIds, priorWordTopicCountMat)
     val priorNt = Glint.pullData((0L until K.toLong).toArray, priorTopicCountVec)
 
-    val deltaVec = Array.fill[Double](K)(0)
+    val deltaVec = Array.fill[Float](K)(0)
     if (lastBatchTime < batchTime) {
       val batchDelta = if (lastBatchTime >= 0) (batchTime - lastBatchTime) / duration else 1
-      val yeta = math.pow(1 - rate , batchDelta)
+      val yeta = math.pow(1 - rate , batchDelta).toFloat
       // nt = math.pow(rate, batchDelta) * nt
       for (i <- 0 until K) {
         deltaVec(i) += (yeta - 1) * priorNt(i)
@@ -452,8 +452,8 @@ class PsStreamLdaModel(val K: Int,
     }.map{
       case (wid, lastTime) =>
         val batchDelta = if(lastTime >= 0) (batchTime - lastTime) / duration else 1
-        val yeta = math.pow(1 - rate , batchDelta)
-        val nwt: Array[Double] = priorNwt(wid)
+        val yeta = math.pow(1 - rate , batchDelta).toFloat
+        val nwt = priorNwt(wid)
         Range(0 , K).map {
           i =>
             val ret = nwt(i) * (yeta - 1)
@@ -476,14 +476,15 @@ class PsStreamLdaModel(val K: Int,
     * @return
     */
   def lazyFetchParameter(wordIds: Array[Long], batchTime: Long, token: String):
-  (Array[Double], Map[Long, Array[Double]]) = {
+  (Array[Float], Map[Long, Array[Float]]) = {
     val (lastBatchTime , lastUpdateTimes) = redisVocab.getLastUpdateBatchTime(wordIds)
     val wordIdTimes = wordIds.zip(lastUpdateTimes)
     lazySyncParameter(wordIdTimes, lastBatchTime, batchTime, token + "-lazyFetch")
   }
 
 
-  def fetchParameter(rawWordIds: Array[Long], batchTime: Long): (Array[Double], Map[Long, Array[Double]]) = {
+  def fetchParameter(rawWordIds: Array[Long], batchTime: Long):
+  (Array[Float], Map[Long, Array[Float]]) = {
     val wordIds = rawWordIds
     val priorNwt = Glint.pullData(wordIds, priorWordTopicCountMat)
     val priorNt = Glint.pullData((0L until K.toLong).toArray, priorTopicCountVec)
@@ -491,7 +492,7 @@ class PsStreamLdaModel(val K: Int,
   }
 
 
-  def update(wordTopicCounts: Seq[(Long, Int, Double)],
+  def update(wordTopicCounts: Seq[(Long, Int, Float)],
              time: Long,
              token: String) = {
     lock.fetchLock(token + "-update")
@@ -503,7 +504,7 @@ class PsStreamLdaModel(val K: Int,
     check(token + "-before-update")
     Glint.pushData(wordTopicDelta, priorWordTopicCountMat)
 
-    val topicDelta = Array.fill[Double](K)(0)
+    val topicDelta = Array.fill[Float](K)(0)
     wordTopicDelta.foreach {
       case (wid, topic, cnt) =>
         topicDelta(topic) += cnt

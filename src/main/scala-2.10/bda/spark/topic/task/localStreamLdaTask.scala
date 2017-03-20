@@ -23,7 +23,7 @@ class localStreamLdaTask extends Task{
 
   val alphaOpt = new FloatOption("alpha", 'a', "the hyper parameter alpha of LDA", 1, 0, Float.MaxValue)
   val betaOpt = new FloatOption("beta", 'b', "the hyper parameter beta of LDA", 1, 0, Float.MaxValue)
-  val rateOpt = new FloatOption("learn_rate", 'r', "the learning rate for Stream LDA", 0.2, 0.0, 0.5)
+  val rateOpt = new FloatOption("learn_rate", 'r', "the learning rate for Stream LDA", 0.2f, 0.0f, 0.5f)
 
   val iterOpt = new IntOption("batch_iter", 'i', "the iteration for each batch", 10, 1, Int.MaxValue)
   val durationOpt = new IntOption("duration", 'd', "the duration for each batch", 60000, 10000, Int.MaxValue)

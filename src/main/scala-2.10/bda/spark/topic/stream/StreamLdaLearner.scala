@@ -80,7 +80,7 @@ class StreamLdaLearner(val iteration: Int,
       entry =>
         val (term, topic) = entry._1
         val cnt = entry._2.size
-        (term, topic, cnt.toDouble / 5)
+        (term, topic, cnt.toFloat / 5)
     }.toSeq
 
     val docTopicCounts = topicSamples.map{
@@ -94,7 +94,7 @@ class StreamLdaLearner(val iteration: Int,
       entry =>
         val (d, topic) = entry._1
         val cnt = entry._2.size
-        (d, topic, cnt.toDouble/ 5)
+        (d, topic, cnt.toFloat / 5)
     }
 
     model.update(wordTopicCounts, batchTime, token)
@@ -110,8 +110,8 @@ class StreamLdaLearner(val iteration: Int,
     docs.map(new IdDocInstance(_))
   }
 
-  def logLikelihood(wordTopicCounts: Seq[(Long, Int, Double)],
-                    docTopicCounts: Seq[(Int, Int, Double)],
+  def logLikelihood(wordTopicCounts: Seq[(Long, Int, Float)],
+                    docTopicCounts: Seq[(Int, Int, Float)],
                     docs: Seq[IdDoc]): Double ={
 
     val nwt = mutable.Map[Long, DenseVector[Double]]()
@@ -161,15 +161,15 @@ class StreamLdaLearner(val iteration: Int,
 
 
 
-  def logLikelihood(priorNwt: Map[Long, Array[Double]],
-                    priorNt: Array[Double],
+  def logLikelihood(priorNwt: Map[Long, Array[Float]],
+                    priorNt: Array[Float],
                     docs: Seq[IdDoc]): Double = {
     val wordTopicCounts = docs.
       flatMap(_.toSeq).groupBy(x => x).map {
       entry =>
         val (term, topic) = entry._1
         val cnt = entry._2.size
-        (term, topic, cnt.toDouble)
+        (term, topic, cnt.toFloat)
     }.toSeq
 
     val docTopicCounts = docs.zipWithIndex.flatMap {
@@ -179,17 +179,17 @@ class StreamLdaLearner(val iteration: Int,
       entry =>
         val (d, topic) = entry._1
         val cnt = entry._2.size
-        (d, topic, cnt.toDouble)
+        (d, topic, cnt.toFloat)
     }.toSeq
 
     logLikelihood(priorNwt, priorNt, wordTopicCounts, docTopicCounts, docs)
   }
 
 
-  def logLikelihood(priorNwt: Map[Long, Array[Double]],
-                    priorNt: Array[Double],
-                    wordTopicCounts: Seq[(Long, Int, Double)],
-                    docTopicCounts: Seq[(Int, Int, Double)],
+  def logLikelihood(priorNwt: Map[Long, Array[Float]],
+                    priorNt: Array[Float],
+                    wordTopicCounts: Seq[(Long, Int, Float)],
+                    docTopicCounts: Seq[(Int, Int, Float)],
                     docs: Seq[IdDoc]): Double = {
 
     val totNwt = DenseVector.fill[Double](K)(0)
@@ -318,9 +318,5 @@ object StreamLdaLearner{
     val doc = Seq((1L, 2), (3L,1), (0L, 1))
     val wordTopicCounts = Seq((1L, 2, 1.0), (0L, 1, 1.0), (3L, 1, 1.0))
     val docTopicCounts = Seq((0, 2, 1.0), (0, 1, 2.0))
-    val model = new PsStreamLdaModel(4, 10L, 1.0, 1.0, 1.0, "bda07", 30001,60000, 0)
-    val learner = new StreamLdaLearner(10, model)
-    println(learner.logLikelihood(wordTopicCounts, docTopicCounts, Seq(doc)))
-    model.destroy()
   }
 }

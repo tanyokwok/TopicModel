@@ -102,7 +102,7 @@ class VocabManager(val ldaModel: PsStreamLdaModel,
     logInfo(s"[Build Vocab] try to push data at ${timer.getReadableRunnningTime()}")
 
 
-    var deltaVec: Array[Double] = null
+    var deltaVec: Array[Float] = null
     //获取新词ID,并且添加词汇计数
     if (unkWord.size > 0) {
       val unkWordSortedByFreq = unkWord.sortBy(-_._1._2).map(_._1._1)
